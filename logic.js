@@ -1,7 +1,15 @@
 // LUMAR — rekenlogica (los van de interface, zodat het te testen is)
+//
+// Boekhoudprincipes:
+// - Kostprijs horloge = inkoopprijs + extra kosten. Kosten die achteraf aan een horloge worden toegevoegd
+//   (bv. service) zijn uitgaven met capitalized = true: ze verhogen de kostprijs en tellen NIET als bedrijfskosten.
+// - Alles wat betaald/ontvangen is, staat precies één keer als bankmutatie met een reference_id.
+// - Wat nog open staat (te betalen/ontvangen) zit in pendingPayments en nog niet in de bank.
+// - reconcile() bewijst dat alles sluit: bank + voorraad + te ontvangen − te betalen − btw-schuld = eigen vermogen.
 
 export const n = v => (v === null || v === undefined || v === '' || isNaN(+v)) ? 0 : +v;
 export const round2 = v => Math.round(n(v) * 100) / 100;
+const eq = (a, b) => Math.abs(round2(a) - round2(b)) < 0.005;
 
 export const STATUS = {
   incoming: 'Onderweg',
@@ -19,8 +27,10 @@ export const BOX_PAPERS = { full: 'Box & papieren', box: 'Alleen box', papers: '
 export const BANK_TYPES = {
   sale: 'Verkoop', purchase: 'Inkoop', expense: 'Uitgave', owner_deposit: 'Storting vennoot',
   owner_withdrawal: 'Opname vennoot', supplier_refund: 'Terugbetaling verkoper',
-  customer_refund: 'Terugbetaling klant', income: 'Overige ontvangst', correction: 'Saldocorrectie',
+  customer_refund: 'Terugbetaling klant', income: 'Overige opbrengst', correction: 'Saldocorrectie',
+  vat_payment: 'Btw-afdracht',
 };
+export const MANUAL_BANK_TYPES = ['owner_deposit', 'owner_withdrawal', 'income', 'correction', 'vat_payment'];
 
 // Verdeel een bedrag over gewichten tot op de cent (restcenten naar grootste restwaarden)
 export function splitMoney(total, weights) {
@@ -47,10 +57,17 @@ export const watchProfit = (w, settings) =>
   round2(n(w.sale_price) - n(w.sale_costs) - n(w.total_cost) - marginVat(w, settings));
 
 export const inPeriod = (date, from, to) => !!date && (!from || date >= from) && (!to || date <= to);
+export const customerReturns = w => Array.isArray(w.customer_returns) ? w.customer_returns : [];
+
+// Kosten die achteraf aan de kostprijs van een horloge zijn toegevoegd
+export const capitalizedSum = (state, watchId) =>
+  round2(state.expenses.filter(e => e.capitalized && e.watch_id === watchId).reduce((a, e) => a + n(e.amount), 0));
+// Wat er bij de inkoop zelf betaald is (kostprijs zonder later toegevoegde kosten)
+export const purchaseAmount = (state, w) => round2(n(w.total_cost) - capitalizedSum(state, w.id));
 
 export function linkedReturnCosts(state, watchId) {
-  return state.expenses.filter(e => e.watch_id === watchId && e.category === 'Retourkosten')
-    .reduce((a, e) => a + n(e.amount), 0);
+  return round2(state.expenses.filter(e => e.watch_id === watchId && e.category === 'Retourkosten' && !e.capitalized && e.payment_status === 'offset')
+    .reduce((a, e) => a + n(e.amount), 0));
 }
 
 // Resultaat over een periode (from/to als 'YYYY-MM-DD', leeg = alles)
@@ -61,28 +78,43 @@ export function calc(state, { from = '', to = '' } = {}) {
   const vat = sold.reduce((a, w) => a + marginVat(w, s), 0);
   const cogs = sold.reduce((a, w) => a + n(w.total_cost), 0);
   const saleCosts = sold.reduce((a, w) => a + n(w.sale_costs), 0);
+  // Afschrijven = de volledige kostprijs gaat uit de voorraad naar het resultaat
   const writeOff = state.watches.filter(w => w.status === 'written_off' && inPeriod(w.write_off?.date, from, to))
-    .reduce((a, w) => a + n(w.write_off?.amount ?? w.total_cost), 0);
+    .reduce((a, w) => a + n(w.total_cost), 0);
   // Retour naar verkoper: verschil tussen terugbetaling en kostprijs
   const returnResult = state.watches.filter(w => w.status === 'returned' && inPeriod(w.supplier_return?.date, from, to))
     .reduce((a, w) => a + n(w.supplier_return?.refund) - n(w.total_cost), 0);
-  const expenses = state.expenses.filter(e => inPeriod(e.date, from, to)).reduce((a, e) => a + n(e.amount), 0);
+  // Retour van klant na betaling: wat we ontvingen minus wat we terugbetalen
+  const customerReturnResult = state.watches.reduce((a, w) => a + customerReturns(w)
+    .filter(r => inPeriod(r.date, from, to)).reduce((b, r) => b + n(r.received) - n(r.amount), 0), 0);
+  const expenses = state.expenses.filter(e => !e.capitalized && inPeriod(e.date, from, to)).reduce((a, e) => a + n(e.amount), 0);
+  const otherIncome = state.bank_entries.filter(e => e.type === 'income' && inPeriod(e.date, from, to)).reduce((a, e) => a + n(e.amount), 0);
+  const corrections = state.bank_entries.filter(e => e.type === 'correction' && inPeriod(e.date, from, to)).reduce((a, e) => a + n(e.amount), 0);
   const stock = state.watches.filter(w => ACTIVE.includes(w.status)).reduce((a, w) => a + n(w.total_cost), 0);
   const stockEstimated = state.watches.filter(w => ACTIVE.includes(w.status))
     .reduce((a, w) => a + n(w.estimated_value || w.total_cost), 0);
   const netRevenue = revenue - vat;
   const grossProfit = netRevenue - cogs;
-  const result = grossProfit - saleCosts - expenses - writeOff + returnResult;
+  const result = grossProfit - saleCosts - expenses - writeOff + returnResult + customerReturnResult + otherIncome + corrections;
   return {
     revenue: round2(revenue), vat: round2(vat), netRevenue: round2(netRevenue), cogs: round2(cogs),
     grossProfit: round2(grossProfit), saleCosts: round2(saleCosts), expenses: round2(expenses),
-    writeOff: round2(writeOff), returnResult: round2(returnResult), result: round2(result),
+    writeOff: round2(writeOff), returnResult: round2(returnResult), customerReturnResult: round2(customerReturnResult),
+    otherIncome: round2(otherIncome), corrections: round2(corrections), result: round2(result),
     stock: round2(stock), stockEstimated: round2(stockEstimated), soldCount: sold.length,
     stockCount: state.watches.filter(w => ACTIVE.includes(w.status)).length,
   };
 }
 
 export const bankBalance = state => round2(state.bank_entries.reduce((a, e) => a + n(e.amount), 0));
+
+// Btw die nog afgedragen moet worden (berekend − al betaald)
+export function vatOwed(state) {
+  const s = state.settings || {};
+  const due = state.watches.reduce((a, w) => a + marginVat(w, s), 0);
+  const paid = state.bank_entries.filter(e => e.type === 'vat_payment').reduce((a, e) => a + Math.abs(n(e.amount)), 0);
+  return round2(due - paid);
+}
 
 // Openstaande betalingen (in = te ontvangen, out = te betalen)
 export function pendingPayments(state) {
@@ -91,22 +123,30 @@ export function pendingPayments(state) {
   for (const w of state.watches) {
     if (w.status === 'sold' && w.sale_payment === 'pending')
       list.push({ id: `sale:${w.id}`, kind: 'sale', watchId: w.id, date: w.sale_date, description: `Verkoop ${name(w)}`, amount: round2(n(w.sale_price) - n(w.sale_costs)), direction: 'in' });
-    if (w.status === 'returned' && w.supplier_return?.payment === 'pending') {
-      const costs = linkedReturnCosts(state, w.id);
-      list.push({ id: `refund:${w.id}`, kind: 'refund', watchId: w.id, date: w.supplier_return.date, description: `Terugbetaling verkoper · ${name(w)}`, amount: round2(Math.max(0, n(w.supplier_return.refund) - costs)), direction: 'in' });
-    }
-    if (w.customer_return?.payment === 'pending')
-      list.push({ id: `customer-return:${w.id}`, kind: 'customer-return', watchId: w.id, date: w.customer_return.date, description: `Terugbetaling klant · ${name(w)}`, amount: round2(n(w.customer_return.amount)), direction: 'out' });
+    if (w.status === 'returned' && w.supplier_return?.payment === 'pending')
+      list.push({ id: `refund:${w.id}`, kind: 'refund', watchId: w.id, date: w.supplier_return.date, description: `Terugbetaling verkoper · ${name(w)}`, amount: round2(n(w.supplier_return.refund) - linkedReturnCosts(state, w.id)), direction: 'in' });
+    customerReturns(w).forEach((r, i) => {
+      if (r.payment === 'pending')
+        list.push({ id: `customer-return:${w.id}:${i}`, kind: 'customer-return', watchId: w.id, index: i, date: r.date, description: `Terugbetaling klant · ${name(w)}`, amount: round2(r.amount), direction: 'out' });
+    });
     if (!w.batch_id && w.purchase_payment === 'pending')
-      list.push({ id: `purchase:${w.id}`, kind: 'purchase', watchId: w.id, date: w.purchase_date, description: `Inkoop ${name(w)}`, amount: round2(w.total_cost), direction: 'out' });
+      list.push({ id: `purchase:${w.id}`, kind: 'purchase', watchId: w.id, date: w.purchase_date, description: `Inkoop ${name(w)}`, amount: purchaseAmount(state, w), direction: 'out' });
   }
   for (const b of state.purchase_batches.filter(b => b.payment_status === 'pending')) {
     const count = state.watches.filter(w => w.batch_id === b.id).length;
-    list.push({ id: `batch:${b.id}`, kind: 'batch', batchId: b.id, date: b.purchase_date, description: `${b.platform || 'Bundel'}-bestelling · ${count} horloges`, amount: round2(b.total_cost), direction: 'out' });
+    list.push({ id: `batch:${b.id}`, kind: 'batch', batchId: b.id, date: b.purchase_date, description: `${b.platform || 'Bundel'}-bestelling · ${count} ${count === 1 ? 'horloge' : 'horloges'}`, amount: round2(b.total_cost), direction: 'out' });
   }
   for (const e of state.expenses.filter(e => e.payment_status === 'pending'))
     list.push({ id: `expense:${e.id}`, kind: 'expense', expenseId: e.id, date: e.date, description: e.description, amount: round2(e.amount), direction: 'out' });
   return list.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
+// Privé voorgeschoten door een vennoot (telt als inbreng)
+function privatePaidBy(state, p) {
+  return round2(
+    state.watches.filter(w => !w.batch_id && w.purchase_payment === 'private' && w.purchase_paid_by === p).reduce((a, w) => a + purchaseAmount(state, w), 0)
+    + state.purchase_batches.filter(b => b.payment_status === 'private' && b.paid_by === p).reduce((a, b) => a + n(b.total_cost), 0)
+    + state.expenses.filter(e => e.payment_status === 'private' && e.paid_by === p).reduce((a, e) => a + n(e.amount), 0));
 }
 
 // Kapitaal per vennoot: stortingen − opnames + privé betaalde kosten + winstaandeel
@@ -115,20 +155,103 @@ export function partnerCapital(state) {
   const partners = s.partners || ['Luuk', 'Marijn'];
   const shares = s.profit_shares || {};
   const result = calc(state).result;
-  return partners.map(p => {
+  // Winst tot op de cent verdelen, zodat de som van de aandelen exact het resultaat is
+  const shareList = partners.map(p => n(shares[p] ?? 100 / partners.length));
+  const profitParts = splitMoney(Math.abs(result), shareList).map(x => result < 0 ? -x : x);
+  return partners.map((p, i) => {
     const deposits = state.bank_entries.filter(e => e.type === 'owner_deposit' && e.partner === p).reduce((a, e) => a + n(e.amount), 0);
     const withdrawals = state.bank_entries.filter(e => e.type === 'owner_withdrawal' && e.partner === p).reduce((a, e) => a + Math.abs(n(e.amount)), 0);
-    const priv = state.watches.filter(w => w.purchase_payment === 'private' && w.purchase_paid_by === p).reduce((a, w) => a + n(w.total_cost), 0)
-      + state.purchase_batches.filter(b => b.payment_status === 'private' && b.paid_by === p).reduce((a, b) => a + n(b.total_cost), 0)
-      + state.expenses.filter(e => e.payment_status === 'private' && e.paid_by === p).reduce((a, e) => a + n(e.amount), 0);
-    const share = n(shares[p] ?? 100 / partners.length);
-    const profitShare = result * share / 100;
+    const priv = privatePaidBy(state, p);
+    const share = shareList[i];
+    const profitShare = profitParts[i];
     return {
       partner: p, deposits: round2(deposits), withdrawals: round2(withdrawals), privatePaid: round2(priv),
       contribution: round2(deposits + priv - withdrawals), share, profitShare: round2(profitShare),
       capital: round2(deposits + priv - withdrawals + profitShare),
     };
   });
+}
+
+// ───────────── Controle: sluit de boekhouding? ─────────────
+export function reconcile(state) {
+  const issues = [];
+  const add = (area, text) => issues.push({ area, text });
+  const name = w => `${w.brand} ${w.model}`;
+  const byRef = new Map();
+  for (const e of state.bank_entries) if (e.reference_id) { const l = byRef.get(e.reference_id) || []; l.push(e); byRef.set(e.reference_id, l); }
+  const expectEntry = (ref, amount, label, area) => {
+    const l = byRef.get(ref) || [];
+    if (l.length === 0) add(area, `${label}: bankmutatie ontbreekt (verwacht ${amount.toFixed(2)})`);
+    else if (l.length > 1) add(area, `${label}: ${l.length} bankmutaties in plaats van 1`);
+    else if (!eq(l[0].amount, amount)) add(area, `${label}: bankmutatie is ${n(l[0].amount).toFixed(2)}, verwacht ${amount.toFixed(2)}`);
+  };
+  const expectNone = (ref, label, area) => { if ((byRef.get(ref) || []).length) add(area, `${label}: er staat een bankmutatie terwijl de betaling nog open staat`); };
+  const watchIds = new Set(state.watches.map(w => w.id)), batchIds = new Set(state.purchase_batches.map(b => b.id)), expenseIds = new Set(state.expenses.map(e => e.id));
+
+  for (const w of state.watches) {
+    const label = name(w);
+    if (!eq(w.total_cost, n(w.purchase_price) + n(w.extra_costs))) add('Voorraad', `${label}: kostprijs ${n(w.total_cost).toFixed(2)} ≠ inkoopprijs + extra kosten`);
+    if (capitalizedSum(state, w.id) - n(w.extra_costs) > 0.005) add('Voorraad', `${label}: toegevoegde kosten zijn hoger dan de extra kosten`);
+    if (!w.batch_id) {
+      if (w.purchase_payment === 'paid') expectEntry(`purchase:${w.id}`, -purchaseAmount(state, w), `Inkoop ${label}`, 'Inkoop');
+      else expectNone(`purchase:${w.id}`, `Inkoop ${label}`, 'Inkoop');
+    } else if (!batchIds.has(w.batch_id)) add('Inkoop', `${label}: hoort bij een bundel die niet meer bestaat`);
+    if (w.status === 'sold') {
+      if (!w.sale_date || !n(w.sale_price)) add('Verkoop', `${label}: verkocht zonder datum of verkoopprijs`);
+      if (w.sale_payment === 'received') expectEntry(`sale:${w.id}`, round2(n(w.sale_price) - n(w.sale_costs)), `Verkoop ${label}`, 'Verkoop');
+      else expectNone(`sale:${w.id}`, `Verkoop ${label}`, 'Verkoop');
+    } else if ((byRef.get(`sale:${w.id}`) || []).length) add('Verkoop', `${label}: niet verkocht maar er staat wel een verkoop in de bank`);
+    if (w.status === 'returned') {
+      const ref = `refund:${w.id}`;
+      if (w.supplier_return?.payment === 'received') expectEntry(ref, round2(n(w.supplier_return.refund) - linkedReturnCosts(state, w.id)), `Terugbetaling ${label}`, 'Retouren');
+      else expectNone(ref, `Terugbetaling ${label}`, 'Retouren');
+    }
+    customerReturns(w).forEach((r, i) => {
+      const ref = `customer-return:${w.id}:${i}`;
+      if (r.payment === 'paid') expectEntry(ref, -round2(r.amount), `Klantretour ${label}`, 'Retouren'); else expectNone(ref, `Klantretour ${label}`, 'Retouren');
+      expectEntry(`cr-sale:${w.id}:${i}`, round2(r.received), `Oorspronkelijke verkoop (retour) ${label}`, 'Retouren');
+    });
+  }
+  for (const b of state.purchase_batches) {
+    const members = state.watches.filter(w => w.batch_id === b.id);
+    const label = `Bundel ${b.platform || ''} ${b.purchase_date || ''}`.trim();
+    if (!members.length) add('Inkoop', `${label}: bevat geen horloges meer`);
+    const sum = round2(members.reduce((a, w) => a + purchaseAmount(state, w), 0));
+    if (members.length && !eq(sum, b.total_cost)) add('Inkoop', `${label}: totaal ${n(b.total_cost).toFixed(2)} ≠ som van de horloges ${sum.toFixed(2)}`);
+    if (b.payment_status === 'paid') expectEntry(`batch:${b.id}`, -round2(b.total_cost), label, 'Inkoop'); else expectNone(`batch:${b.id}`, label, 'Inkoop');
+  }
+  for (const e of state.expenses) {
+    if (e.payment_status === 'paid') expectEntry(`expense:${e.id}`, -round2(e.amount), `Uitgave ${e.description}`, 'Uitgaven');
+    else expectNone(`expense:${e.id}`, `Uitgave ${e.description}`, 'Uitgaven');
+    if (e.capitalized && !watchIds.has(e.watch_id)) add('Uitgaven', `${e.description}: hoort bij de kostprijs van een horloge dat niet meer bestaat`);
+    if (e.payment_status === 'offset') {
+      const w = state.watches.find(x => x.id === e.watch_id);
+      if (!w || w.status !== 'returned') add('Uitgaven', `${e.description}: verrekend met een terugbetaling, maar het horloge is niet teruggestuurd`);
+    }
+  }
+  // Bankmutaties die naar iets verwijzen dat niet (meer) bestaat
+  for (const e of state.bank_entries) {
+    if (!e.reference_id) { if (!MANUAL_BANK_TYPES.includes(e.type)) add('Bank', `Mutatie "${e.description}" zonder koppeling`); continue; }
+    const [kind, id] = e.reference_id.split(':');
+    const exists = { purchase: watchIds, sale: watchIds, refund: watchIds, 'customer-return': watchIds, 'cr-sale': watchIds, batch: batchIds, expense: expenseIds }[kind];
+    if (!exists || !exists.has(id)) add('Bank', `Mutatie "${e.description}" (${n(e.amount).toFixed(2)}) verwijst naar iets dat niet meer bestaat`);
+  }
+
+  // Balans: wat het bedrijf heeft = wat de vennoten erin hebben + het resultaat
+  const c = calc(state), pend = pendingPayments(state);
+  const bank = bankBalance(state);
+  const receivable = round2(pend.filter(p => p.direction === 'in').reduce((a, p) => a + p.amount, 0));
+  const payable = round2(pend.filter(p => p.direction === 'out').reduce((a, p) => a + p.amount, 0));
+  const vat = vatOwed(state);
+  const partners = (state.settings?.partners || ['Luuk', 'Marijn']);
+  const deposits = round2(state.bank_entries.filter(e => e.type === 'owner_deposit').reduce((a, e) => a + n(e.amount), 0));
+  const withdrawals = round2(state.bank_entries.filter(e => e.type === 'owner_withdrawal').reduce((a, e) => a + Math.abs(n(e.amount)), 0));
+  const privatePaid = round2(partners.reduce((a, p) => a + privatePaidBy(state, p), 0));
+  const assets = round2(bank + c.stock + receivable - payable - vat);
+  const equity = round2(deposits - withdrawals + privatePaid + c.result);
+  const diff = round2(assets - equity);
+  if (!eq(diff, 0)) add('Balans', `Balans sluit niet: verschil van ${diff.toFixed(2)}`);
+  return { ok: issues.length === 0, issues, bank, stock: c.stock, receivable, payable, vat, assets, deposits, withdrawals, privatePaid, result: c.result, equity, diff };
 }
 
 // Wat moet er nog gebeuren
@@ -139,10 +262,23 @@ export function actionItems(state) {
     if (w.status === 'incoming' && w.purchase_date && daysBetween(w.purchase_date, today) > 10)
       items.push({ id: `late:${w.id}`, kind: 'late', watchId: w.id, date: w.purchase_date, description: `${w.brand} ${w.model}`, reason: `Al ${daysBetween(w.purchase_date, today)} dagen onderweg` });
   }
-  for (const e of state.expenses.filter(e => !e.receipt_path && n(e.amount) >= 10))
-    items.push({ id: `receipt:${e.id}`, kind: 'receipt', expenseId: e.id, date: e.date, description: e.description, reason: 'Bon ontbreekt' });
+  for (const r of missingReceipts(state))
+    items.push({ id: `receipt:${r.table}:${r.id}`, kind: 'receipt', table: r.table, recordId: r.id, date: r.date, description: r.description, reason: 'Bon ontbreekt' });
   return items;
 }
+
+// Alle boekingen waar een bon bij hoort
+export function receiptRecords(state) {
+  const out = [];
+  for (const w of state.watches.filter(w => !w.batch_id))
+    out.push({ table: 'watches', id: w.id, date: w.purchase_date, description: `Inkoop ${w.brand} ${w.model}`, kind: 'Inkoop', amount: purchaseAmount(state, w), path: w.receipt_path });
+  for (const b of state.purchase_batches)
+    out.push({ table: 'purchase_batches', id: b.id, date: b.purchase_date, description: (c => `${b.platform || 'Bundel'}-bestelling · ${c} ${c === 1 ? 'horloge' : 'horloges'}`)(state.watches.filter(w => w.batch_id === b.id).length), kind: 'Inkoop (bundel)', amount: round2(b.total_cost), path: b.receipt_path });
+  for (const e of state.expenses)
+    out.push({ table: 'expenses', id: e.id, date: e.date, description: e.description, kind: e.capitalized ? 'Kosten horloge' : 'Uitgave', amount: round2(e.amount), path: e.receipt_path });
+  return out.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+export const missingReceipts = state => receiptRecords(state).filter(r => !r.path && r.amount >= 10);
 
 export function daysBetween(a, b) {
   return Math.round((new Date(b) - new Date(a)) / 864e5);
@@ -168,7 +304,8 @@ export function quarterlyVat(state, year) {
     const from = `${year}-${String(q * 3 - 2).padStart(2, '0')}-01`;
     const to = new Date(Date.UTC(year, q * 3, 0)).toISOString().slice(0, 10);
     const sold = state.watches.filter(w => w.status === 'sold' && inPeriod(w.sale_date, from, to));
-    return { quarter: `K${q} ${year}`, count: sold.length, vat: round2(sold.reduce((a, w) => a + marginVat(w, s), 0)), revenue: round2(sold.reduce((a, w) => a + n(w.sale_price), 0)) };
+    const paid = state.bank_entries.filter(e => e.type === 'vat_payment' && inPeriod(e.date, from, to)).reduce((a, e) => a + Math.abs(n(e.amount)), 0);
+    return { quarter: `K${q} ${year}`, count: sold.length, vat: round2(sold.reduce((a, w) => a + marginVat(w, s), 0)), revenue: round2(sold.reduce((a, w) => a + n(w.sale_price), 0)), paid: round2(paid) };
   });
 }
 

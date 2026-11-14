@@ -3,13 +3,14 @@ import { createStore } from './store.js';
 import {
   n, round2, STATUS, ACTIVE, PLATFORMS, EXPENSE_CATEGORIES, BOX_PAPERS, BANK_TYPES, splitMoney, marginVat,
   watchProfit, calc, bankBalance, pendingPayments, partnerCapital, actionItems, daysBetween, monthlyResults,
-  quarterlyVat, groupSold, linkedReturnCosts, toCsv, inPeriod,
+  quarterlyVat, groupSold, linkedReturnCosts, toCsv, inPeriod, customerReturns, capitalizedSum, purchaseAmount,
+  vatOwed, reconcile, receiptRecords, missingReceipts, MANUAL_BANK_TYPES,
 } from './logic.js';
 
 // ───────────── Hulpjes ─────────────
 let store;
 let route = { mod: 'home', page: null };
-const ui = { stockFilter: 'active', stockSearch: '', period: 'year', salesPeriod: 'year', expensePeriod: 'year', taskOwner: 'all', ideaFilter: 'open', wishFilter: 'searching', postFilter: 'open', calMonth: null };
+const ui = { stockFilter: 'active', stockSearch: '', period: 'year', salesPeriod: 'year', expensePeriod: 'year', taskOwner: 'all', ideaFilter: 'open', wishFilter: 'searching', postFilter: 'open', calMonth: null, docFilter: 'all', receiptFilter: 'missing' };
 const $ = (s, el = document) => el.querySelector(s);
 const S = () => store.state;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -125,7 +126,7 @@ function openForm({ eyebrow = '', title, intro = '', fields, submit = 'Opslaan',
     } catch (err) { console.error(err); toast(err.message || 'Er ging iets mis', 'bad'); }
     finally { btn.disabled = false; btn.classList.remove('busy'); }
   });
-  setTimeout(() => form.querySelector('input:not([type=hidden]):not([disabled]),select')?.focus(), 30);
+  setTimeout(() => { if (!form.contains(document.activeElement)) form.querySelector('input:not([type=hidden]):not([disabled]),select')?.focus(); }, 30);
   return { dlg, form };
 }
 
@@ -309,30 +310,90 @@ function saleForm(watchId) {
 }
 
 // Uitgave
+const eqMoney = (a, b) => Math.abs(round2(a) - round2(b)) < 0.005;
+const removeBankPrefix = async prefix => { for (const e of S().bank_entries.filter(e => e.reference_id === prefix || String(e.reference_id || '').startsWith(prefix + ':'))) await store.remove('bank_entries', e.id); };
+async function syncBatch(batchId) {
+  const b = S().purchase_batches.find(x => x.id === batchId); if (!b) return;
+  const members = S().watches.filter(w => w.batch_id === batchId);
+  if (!members.length) { await removeBankRef(`batch:${batchId}`); await store.remove('purchase_batches', batchId); return; }
+  const total = round2(members.reduce((a, w) => a + purchaseAmount(S(), w), 0));
+  if (!eqMoney(total, b.total_cost)) await store.update('purchase_batches', batchId, { total_cost: total });
+  const be = S().bank_entries.find(e => e.reference_id === `batch:${batchId}`);
+  if (be && !eqMoney(be.amount, -total)) await store.update('bank_entries', be.id, { amount: -total });
+}
+
+// Uitgave (ook: kosten achteraf bij een horloge)
 function expenseForm(preset = {}) {
-  const returnable = S().watches.filter(w => ['returned', 'in_stock', 'incoming', 'customer_returning', 'sold'].includes(w.status));
+  const linkable = S().watches.filter(w => w.status !== 'written_off');
+  const pw = preset.watch_id && watchById(preset.watch_id);
   openForm({
-    eyebrow: 'Nieuwe uitgave', title: 'Kosten toevoegen', submit: 'Uitgave opslaan',
+    eyebrow: preset.capitalized ? 'Kosten horloge' : 'Nieuwe uitgave', title: preset.capitalized && pw ? `Kosten voor ${wname(pw)}` : 'Kosten toevoegen', submit: 'Opslaan',
+    intro: preset.capitalized ? 'Deze kosten worden opgeteld bij de kostprijs van het horloge (bijvoorbeeld service, reparatie of een nieuwe band). Ze tellen dan niet als losse bedrijfskosten, maar drukken de winst bij verkoop.' : '',
     fields: [
       { name: 'description', label: 'Omschrijving', required: true, wide: true, value: preset.description || '' },
       { name: 'date', label: 'Datum', type: 'date', value: today(), required: true },
       { name: 'amount', label: 'Bedrag (€)', type: 'money', required: true },
       { name: 'category', label: 'Categorie', type: 'select', options: EXPENSE_CATEGORIES, value: preset.category },
-      { name: 'watch_id', label: 'Hoort bij horloge (optioneel)', type: 'select', value: preset.watch_id, options: [['', '—'], ...returnable.map(w => [w.id, `${wname(w)} · ${STATUS[w.status]}`])] },
+      { name: 'watch_id', label: 'Hoort bij horloge (optioneel)', type: 'select', value: preset.watch_id, options: [['', '—'], ...linkable.map(w => [w.id, `${wname(w)} · ${STATUS[w.status]}`])] },
+      { name: 'capitalized', label: 'Optellen bij de kostprijs van dit horloge', type: 'checkbox', wide: true, value: preset.capitalized, show: d => d.watch_id && d.category !== 'Retourkosten' },
       { name: 'payment', label: 'Betaling', type: 'select', value: preset.payment, options: [...paymentOptions, ['offset', 'Verrekend met terugbetaling verkoper']] },
       { name: 'paid_by', label: 'Betaald door', type: 'select', options: partners(), value: store.user?.name, show: d => d.payment === 'private' },
       { name: 'receipt', label: 'Bon', type: 'file' },
     ],
     onSubmit: async d => {
-      if (d.payment === 'offset' && !d.watch_id) { toast('Kies het horloge waarvan de terugbetaling wordt verrekend', 'bad'); return false; }
+      const amt = round2(d.amount);
+      if (amt <= 0) { toast('Vul een bedrag groter dan 0 in', 'bad'); return false; }
+      const cap = !!d.capitalized && !!d.watch_id && d.category !== 'Retourkosten';
+      if (d.payment === 'offset') {
+        const w = watchById(d.watch_id);
+        if (d.category !== 'Retourkosten' || !w || w.status !== 'returned' || w.supplier_return?.payment !== 'pending') {
+          toast('Verrekenen kan alleen bij Retourkosten van een teruggestuurd horloge waarvan de terugbetaling nog open staat', 'bad'); return false;
+        }
+      }
       const receipt_path = await uploadReceipt(d.receipt);
       const e = await store.insert('expenses', {
-        date: d.date, description: d.description, amount: n(d.amount), category: d.category, payment_status: d.payment,
-        paid_by: d.payment === 'private' ? d.paid_by : null, watch_id: d.watch_id || null, receipt_path,
+        date: d.date, description: d.description, amount: amt, category: d.category, payment_status: d.payment,
+        paid_by: d.payment === 'private' ? d.paid_by : null, watch_id: d.watch_id || null, receipt_path, capitalized: cap,
       });
-      if (d.payment === 'paid') await addBank({ date: d.date, description: d.description, amount: -n(d.amount), type: 'expense', reference_id: `expense:${e.id}` });
-      toast('Uitgave opgeslagen');
+      if (cap) {
+        const w = watchById(d.watch_id);
+        await store.update('watches', w.id, { extra_costs: round2(n(w.extra_costs) + amt), total_cost: round2(n(w.total_cost) + amt), history: hist(w, `Kosten toegevoegd: ${d.description} (${euro(amt)})`, d.date) });
+      }
+      if (d.payment === 'paid') await addBank({ date: d.date, description: d.description, amount: -amt, type: 'expense', reference_id: `expense:${e.id}` });
+      toast(cap ? 'Kosten bij de kostprijs opgeteld' : 'Uitgave opgeslagen');
     },
+  });
+}
+
+function editExpenseForm(id) {
+  const e = S().expenses.find(x => x.id === id);
+  const w = e.watch_id && watchById(e.watch_id);
+  const locked = e.payment_status === 'offset' && w?.supplier_return?.payment === 'received';
+  const payLabel = { paid: 'Betaald vanaf zakelijke rekening', pending: 'Nog te betalen', private: `Privé betaald door ${e.paid_by}`, offset: 'Verrekend met terugbetaling verkoper' }[e.payment_status];
+  openForm({
+    eyebrow: e.capitalized ? 'Kosten horloge' : 'Uitgave', title: e.description,
+    intro: `Betaling: <b>${esc(payLabel)}</b>${w ? ` · horloge: <b>${esc(wname(w))}</b>` : ''}.${locked ? ' De terugbetaling is al verwerkt, daarom kan het bedrag niet meer veranderen.' : ''} Klopt de betaalwijze niet? Verwijder de uitgave en voer hem opnieuw in.`,
+    fields: [
+      { name: 'description', label: 'Omschrijving', required: true, wide: true, value: e.description },
+      { name: 'date', label: 'Datum', type: 'date', required: true, value: e.date },
+      { name: 'amount', label: 'Bedrag (€)', type: 'money', required: true, value: e.amount, show: () => !locked },
+      { name: 'category', label: 'Categorie', type: 'select', options: EXPENSE_CATEGORIES, value: e.category, show: () => e.payment_status !== 'offset' && !e.capitalized },
+      { name: 'receipt', label: e.receipt_path ? 'Bon vervangen' : 'Bon toevoegen', type: 'file' },
+    ],
+    onSubmit: async d => {
+      const amt = locked ? n(e.amount) : round2(d.amount);
+      if (amt <= 0) { toast('Vul een bedrag groter dan 0 in', 'bad'); return false; }
+      const patch = { description: d.description, date: d.date, amount: amt };
+      if (d.category) patch.category = d.category;
+      if (d.receipt) patch.receipt_path = await uploadReceipt(d.receipt);
+      const diff = round2(amt - n(e.amount));
+      if (e.capitalized && diff && w) await store.update('watches', w.id, { extra_costs: round2(n(w.extra_costs) + diff), total_cost: round2(n(w.total_cost) + diff), history: hist(w, `Kosten "${d.description}" aangepast naar ${euro(amt)}`) });
+      await store.update('expenses', id, patch);
+      const be = S().bank_entries.find(x => x.reference_id === `expense:${id}`);
+      if (be) await store.update('bank_entries', be.id, { amount: -amt, date: d.date, description: d.description });
+      toast('Uitgave bijgewerkt');
+    },
+    onDelete: () => deleteExpense(id, true),
   });
 }
 
@@ -347,8 +408,10 @@ async function markArrived(id) {
 function editWatchForm(id) {
   const w = watchById(id);
   const sold = w.status === 'sold';
+  const cap = capitalizedSum(S(), id);
   openForm({
     eyebrow: 'Bewerken', title: wname(w), submit: 'Wijzigingen opslaan',
+    intro: cap ? `Let op: in de extra kosten zit ${euro(cap)} aan kosten die achteraf zijn toegevoegd. Pas die aan via Financiën → Uitgaven.` : '',
     fields: [
       { name: 'brand', label: 'Merk', value: w.brand, required: true },
       { name: 'model', label: 'Model', value: w.model, required: true },
@@ -363,34 +426,38 @@ function editWatchForm(id) {
       { name: 'purchase_platform', label: 'Platform', type: 'select', value: w.purchase_platform, options: PLATFORMS },
       { name: 'seller', label: 'Verkoper', value: w.seller },
       { name: 'purchase_price', label: 'Inkoopprijs (€)', type: 'money', value: w.purchase_price },
-      { name: 'extra_costs', label: 'Extra kosten (€)', type: 'money', value: w.extra_costs, hint: 'Ook service of reparatie achteraf' },
+      { name: 'extra_costs', label: 'Extra kosten bij inkoop (€)', type: 'money', value: round2(n(w.extra_costs) - cap), hint: 'Service of reparatie achteraf? Gebruik "＋ Kosten" bij het horloge.' },
       { name: 'vat_scheme', label: 'Btw-regeling', type: 'select', value: w.vat_scheme, options: [['margin', 'Margeregeling'], ['none', 'Geen btw']] },
       ...(sold ? [
         { type: 'section', label: 'Verkoop' },
-        { name: 'sale_date', label: 'Verkoopdatum', type: 'date', value: w.sale_date },
+        { name: 'sale_date', label: 'Verkoopdatum', type: 'date', value: w.sale_date, required: true },
         { name: 'sale_platform', label: 'Platform', type: 'select', value: w.sale_platform, options: PLATFORMS },
         { name: 'buyer', label: 'Koper', value: w.buyer },
-        { name: 'sale_price', label: 'Verkoopprijs (€)', type: 'money', value: w.sale_price },
+        { name: 'sale_price', label: 'Verkoopprijs (€)', type: 'money', value: w.sale_price, required: true },
         { name: 'sale_costs', label: 'Verkoopkosten (€)', type: 'money', value: w.sale_costs },
       ] : []),
       { name: 'photo', label: 'Nieuwe foto', type: 'file', accept: 'image/*' },
-      { name: 'receipt', label: 'Bon toevoegen of vervangen', type: 'file' },
+      { name: 'receipt', label: 'Bon toevoegen of vervangen', type: 'file', show: () => !w.batch_id },
       { name: 'notes', label: 'Notities', type: 'textarea', wide: true, value: w.notes },
     ],
     onSubmit: async d => {
       const patch = { ...d }; delete patch.photo; delete patch.receipt;
-      for (const k of ['estimated_value', 'purchase_price', 'extra_costs', 'sale_price', 'sale_costs']) if (k in patch) patch[k] = n(patch[k]);
+      for (const k of ['estimated_value', 'purchase_price', 'extra_costs', 'sale_price', 'sale_costs']) if (k in patch) patch[k] = round2(patch[k]);
+      if (patch.extra_costs < 0) { toast('Extra kosten kunnen niet negatief zijn', 'bad'); return false; }
+      patch.extra_costs = round2(patch.extra_costs + cap);
       patch.box_papers = patch.box_papers || null;
       patch.total_cost = round2(patch.purchase_price + patch.extra_costs);
       if (d.photo) patch.photo_path = await uploadPhoto(d.photo);
       if (d.receipt) patch.receipt_path = await uploadReceipt(d.receipt);
-      if (patch.total_cost !== n(w.total_cost)) patch.history = hist(w, `Kostprijs aangepast van ${euro(w.total_cost)} naar ${euro(patch.total_cost)}`);
+      if (!eqMoney(patch.total_cost, w.total_cost)) patch.history = hist(w, `Kostprijs aangepast van ${euro(w.total_cost)} naar ${euro(patch.total_cost)}`);
       await store.update('watches', id, patch);
-      // Gekoppelde bankmutaties meenemen
+      // Gekoppelde bankmutaties en bundel meenemen
       const pe = S().bank_entries.find(e => e.reference_id === `purchase:${id}`);
-      if (pe && n(pe.amount) !== -patch.total_cost) await store.update('bank_entries', pe.id, { amount: -patch.total_cost });
+      const pAmt = -purchaseAmount(S(), watchById(id));
+      if (pe && (!eqMoney(pe.amount, pAmt) || pe.date !== patch.purchase_date)) await store.update('bank_entries', pe.id, { amount: pAmt, date: patch.purchase_date || pe.date });
+      if (w.batch_id) await syncBatch(w.batch_id);
       const se = S().bank_entries.find(e => e.reference_id === `sale:${id}`);
-      if (se && sold) { const net = round2(patch.sale_price - patch.sale_costs); if (n(se.amount) !== net) await store.update('bank_entries', se.id, { amount: net }); }
+      if (se && sold) { const net = round2(patch.sale_price - patch.sale_costs); if (!eqMoney(se.amount, net)) await store.update('bank_entries', se.id, { amount: net, date: patch.sale_date }); }
       toast('Opgeslagen'); $('dialog.detail')?.close(); watchDetail(id);
     },
   });
@@ -399,27 +466,34 @@ function editWatchForm(id) {
 function customerReturnForm(id) {
   const w = watchById(id);
   const paid = w.sale_payment === 'received';
+  const saleEntry = S().bank_entries.find(e => e.reference_id === `sale:${id}`);
+  const received = saleEntry ? n(saleEntry.amount) : round2(n(w.sale_price) - n(w.sale_costs));
   openForm({
     eyebrow: 'Retour van klant', title: wname(w), submit: 'Retour verwerken',
-    intro: paid ? 'De koper heeft al betaald. De verkoop wordt teruggedraaid en de terugbetaling wordt geboekt.' : 'De betaling is nog niet ontvangen. De verkoop wordt geannuleerd.',
+    intro: paid ? `De koper heeft al betaald (${euro(received)} ontvangen). De verkoop wordt teruggedraaid en de terugbetaling wordt geboekt. Een verschil tussen ontvangen en terugbetaald komt als kosten in het resultaat.` : 'De betaling is nog niet ontvangen. De verkoop wordt geannuleerd.',
     fields: [
       { name: 'date', label: 'Datum', type: 'date', value: today(), required: true },
       { name: 'reason', label: 'Reden', placeholder: 'bv. niet zoals beschreven' },
-      { name: 'amount', label: 'Terug te betalen aan klant (€)', type: 'money', value: round2(n(w.sale_price) - n(w.sale_costs)), show: () => paid },
+      { name: 'amount', label: 'Terug te betalen aan klant (€)', type: 'money', value: received, show: () => paid },
       { name: 'payment', label: 'Terugbetaling', type: 'select', options: [['paid', 'Al terugbetaald'], ['pending', 'Nog terug te betalen']], show: () => paid },
       { name: 'arrived', label: 'Horloge is al terug', type: 'select', options: [['no', 'Nee, onderweg terug'], ['yes', 'Ja, terug op voorraad']] },
     ],
     onSubmit: async d => {
-      const prev = { date: w.sale_date, platform: w.sale_platform, price: w.sale_price, costs: w.sale_costs, buyer: w.buyer };
       const patch = {
         status: d.arrived === 'yes' ? 'in_stock' : 'customer_returning',
         sale_date: null, sale_platform: null, buyer: null, sale_price: null, sale_costs: 0, sale_payment: null,
-        history: [...hist(w, `Verkoop teruggedraaid (${d.reason || 'retour'}); was ${euro(prev.price)} via ${prev.platform}`, d.date)],
+        history: hist(w, `Verkoop teruggedraaid (${d.reason || 'retour'}); was ${euro(w.sale_price)} via ${w.sale_platform}`, d.date),
       };
-      if (paid) patch.customer_return = { date: d.date, amount: n(d.amount), reason: d.reason, payment: d.payment };
+      let idx = -1;
+      if (paid) {
+        const list = [...customerReturns(w), { date: d.date, amount: round2(d.amount), received: round2(received), reason: d.reason, payment: d.payment, sale_price: w.sale_price, sale_date: w.sale_date, platform: w.sale_platform }];
+        idx = list.length - 1; patch.customer_returns = list;
+      }
       await store.update('watches', id, patch);
       if (!paid) await removeBankRef(`sale:${id}`);
-      if (paid && d.payment === 'paid') await addBank({ date: d.date, description: `Terugbetaling klant · ${wname(w)}`, amount: -n(d.amount), type: 'customer_refund', reference_id: `customer-return:${id}` });
+      // De oorspronkelijke verkoopontvangst blijft in de bank staan, maar hoort nu bij deze retour
+      if (paid && saleEntry) await store.update('bank_entries', saleEntry.id, { reference_id: `cr-sale:${id}:${idx}` });
+      if (paid && d.payment === 'paid') await addBank({ date: d.date, description: `Terugbetaling klant · ${wname(w)}`, amount: -round2(d.amount), type: 'customer_refund', reference_id: `customer-return:${id}:${idx}` });
       toast('Retour verwerkt'); $('dialog.detail')?.close();
     },
   });
@@ -429,7 +503,7 @@ function supplierReturnForm(id) {
   const w = watchById(id);
   openForm({
     eyebrow: 'Terug naar verkoper', title: wname(w), submit: 'Retour opslaan',
-    intro: 'Gebruik dit als je het horloge terugstuurt naar de verkoper. Retourverzendkosten voeg je daarna toe als uitgave in de categorie Retourkosten.',
+    intro: 'Gebruik dit als je het horloge terugstuurt naar de verkoper. Retourverzendkosten voeg je toe als uitgave in de categorie Retourkosten. Zijn ze verrekend met de terugbetaling? Voeg ze dan toe vóórdat je de terugbetaling als ontvangen verwerkt.',
     fields: [
       { name: 'date', label: 'Datum', type: 'date', value: today(), required: true },
       { name: 'refund', label: 'Terugbetaling van verkoper (€)', type: 'money', value: w.total_cost },
@@ -438,10 +512,10 @@ function supplierReturnForm(id) {
     ],
     onSubmit: async d => {
       await store.update('watches', id, {
-        status: 'returned', supplier_return: { date: d.date, refund: n(d.refund), payment: d.payment, reason: d.reason },
+        status: 'returned', supplier_return: { date: d.date, refund: round2(d.refund), payment: d.payment, reason: d.reason },
         history: hist(w, `Teruggestuurd naar verkoper${d.reason ? ` (${d.reason})` : ''}; terugbetaling ${euro(d.refund)}`, d.date),
       });
-      if (d.payment === 'received') await addBank({ date: d.date, description: `Terugbetaling verkoper · ${wname(w)}`, amount: n(d.refund) - linkedReturnCosts(S(), id), type: 'supplier_refund', reference_id: `refund:${id}` });
+      if (d.payment === 'received') await addBank({ date: d.date, description: `Terugbetaling verkoper · ${wname(w)}`, amount: round2(n(d.refund) - linkedReturnCosts(S(), id)), type: 'supplier_refund', reference_id: `refund:${id}` });
       toast('Retour opgeslagen'); $('dialog.detail')?.close();
     },
   });
@@ -451,14 +525,13 @@ function writeOffForm(id) {
   const w = watchById(id);
   openForm({
     eyebrow: 'Afschrijven', title: wname(w), submit: 'Afschrijven', danger: true,
-    intro: 'Het horloge gaat uit de voorraad en het bedrag komt als verlies in het resultaat.',
+    intro: `Het horloge gaat uit de voorraad en de volledige kostprijs van <b>${euro(w.total_cost)}</b> komt als verlies in het resultaat.`,
     fields: [
       { name: 'date', label: 'Datum', type: 'date', value: today(), required: true },
-      { name: 'amount', label: 'Af te schrijven bedrag (€)', type: 'money', value: w.total_cost },
       { name: 'reason', label: 'Reden', required: true, placeholder: 'bv. nep, kapot, kwijt' },
     ],
     onSubmit: async d => {
-      await store.update('watches', id, { status: 'written_off', write_off: { date: d.date, amount: n(d.amount), reason: d.reason }, history: hist(w, `Afgeschreven: ${d.reason}`, d.date) });
+      await store.update('watches', id, { status: 'written_off', write_off: { date: d.date, amount: n(w.total_cost), reason: d.reason }, history: hist(w, `Afgeschreven: ${d.reason}`, d.date) });
       toast('Horloge afgeschreven'); $('dialog.detail')?.close();
     },
   });
@@ -466,16 +539,27 @@ function writeOffForm(id) {
 
 async function deleteWatch(id) {
   const w = watchById(id);
-  if (!await confirmDialog('Horloge verwijderen?', `${esc(wname(w))} en de gekoppelde bankmutaties worden definitief verwijderd. Gebruik dit alleen voor een foutieve invoer.`)) return;
-  for (const p of ['purchase', 'sale', 'refund', 'customer-return']) await removeBankRef(`${p}:${id}`);
+  const linked = S().expenses.filter(e => e.watch_id === id && (e.capitalized || e.payment_status === 'offset'));
+  if (!await confirmDialog('Horloge verwijderen?', `${esc(wname(w))} wordt definitief verwijderd, met alle bankmutaties${linked.length ? ` en ${linked.length} gekoppelde kostenpost(en)` : ''}. Gebruik dit alleen voor een foutieve invoer; gebruik anders Afschrijven of Terug naar verkoper.`)) return;
+  for (const p of ['purchase', 'sale', 'refund']) await removeBankRef(`${p}:${id}`);
+  await removeBankPrefix(`customer-return:${id}`); await removeBankPrefix(`cr-sale:${id}`);
+  for (const e of linked) { await removeBankRef(`expense:${e.id}`); await store.remove('expenses', e.id); }
+  for (const e of S().expenses.filter(e => e.watch_id === id)) await store.update('expenses', e.id, { watch_id: null });
   await store.remove('watches', id);
+  if (w.batch_id) await syncBatch(w.batch_id);
   $('dialog.detail')?.close(); toast('Verwijderd'); render();
 }
 
-async function deleteExpense(id) {
+async function deleteExpense(id, fromForm = false) {
   const e = S().expenses.find(x => x.id === id);
-  if (!await confirmDialog('Uitgave verwijderen?', `${esc(e.description)} (${euro(e.amount)}) wordt verwijderd, inclusief de bankmutatie.`)) return;
-  await removeBankRef(`expense:${id}`); await store.remove('expenses', id); toast('Verwijderd'); render();
+  const w = e.watch_id && watchById(e.watch_id);
+  if (e.payment_status === 'offset' && w?.supplier_return?.payment === 'received') { toast('Deze kosten zijn al verrekend met een ontvangen terugbetaling en kunnen niet meer weg', 'bad'); return false; }
+  if (!await confirmDialog('Uitgave verwijderen?', `${esc(e.description)} (${euro(e.amount)}) wordt verwijderd, inclusief de bankmutatie${e.capitalized && w ? ` en de verhoging van de kostprijs van ${esc(wname(w))}` : ''}.`)) return false;
+  if (e.capitalized && w) await store.update('watches', w.id, { extra_costs: round2(Math.max(0, n(w.extra_costs) - n(e.amount))), total_cost: round2(n(w.total_cost) - n(e.amount)), history: hist(w, `Kosten "${e.description}" verwijderd`) });
+  await removeBankRef(`expense:${id}`); await store.remove('expenses', id);
+  if (w?.batch_id) await syncBatch(w.batch_id);
+  toast('Verwijderd'); if (!fromForm) render();
+  return true;
 }
 
 function addReceiptForm(table, id) {
@@ -493,43 +577,44 @@ async function openFile(path) {
   if (win) { if (url.startsWith('data:')) win.document.write(`<iframe src="${url}" style="border:0;width:100%;height:100%"></iframe>`); else win.location = url; }
 }
 
-// Openstaande post verwerken
+// Openstaande post verwerken (bedrag ligt vast, zodat bank en boekhouding altijd gelijk lopen)
 function settleForm(pid) {
   const p = pendingPayments(S()).find(x => x.id === pid); if (!p) return;
   openForm({
     eyebrow: p.direction === 'in' ? 'Ontvangst verwerken' : 'Betaling verwerken', title: p.description, submit: 'Verwerken',
-    fields: [
-      { name: 'date', label: 'Datum', type: 'date', value: today(), required: true },
-      { name: 'amount', label: 'Bedrag (€)', type: 'money', value: p.amount, hint: p.direction === 'in' ? 'Ontvangen op de rekening' : 'Afgeschreven van de rekening' },
-    ],
+    intro: `Bedrag: <b>${euro(p.amount)}</b> ${p.direction === 'in' ? 'ontvangen op' : 'betaald vanaf'} de zakelijke rekening. Wijkt het echte bedrag af? Pas dan eerst de inkoop, verkoop of uitgave aan.`,
+    fields: [{ name: 'date', label: 'Datum van de betaling', type: 'date', value: today(), required: true }],
     onSubmit: async d => {
-      const amt = n(d.amount), [kind, id] = [p.kind, p.watchId || p.batchId || p.expenseId];
+      const amt = round2(p.amount), id = p.watchId || p.batchId || p.expenseId;
       const w = watchById(id);
-      if (kind === 'sale') { await store.update('watches', id, { sale_payment: 'received', history: hist(w, 'Betaling ontvangen', d.date) }); await addBank({ date: d.date, description: `Verkoop ${wname(w)}`, amount: amt, type: 'sale', reference_id: `sale:${id}` }); }
-      if (kind === 'refund') { await store.update('watches', id, { supplier_return: { ...w.supplier_return, payment: 'received' }, history: hist(w, 'Terugbetaling verkoper ontvangen', d.date) }); await addBank({ date: d.date, description: `Terugbetaling verkoper · ${wname(w)}`, amount: amt, type: 'supplier_refund', reference_id: `refund:${id}` }); }
-      if (kind === 'customer-return') { await store.update('watches', id, { customer_return: { ...w.customer_return, payment: 'paid' } }); await addBank({ date: d.date, description: `Terugbetaling klant · ${wname(w)}`, amount: -amt, type: 'customer_refund', reference_id: `customer-return:${id}` }); }
-      if (kind === 'purchase') { await store.update('watches', id, { purchase_payment: 'paid' }); await addBank({ date: d.date, description: `Inkoop ${wname(w)}`, amount: -amt, type: 'purchase', reference_id: `purchase:${id}` }); }
-      if (kind === 'batch') { await store.update('purchase_batches', id, { payment_status: 'paid' }); await addBank({ date: d.date, description: p.description, amount: -amt, type: 'purchase', reference_id: `batch:${id}` }); }
-      if (kind === 'expense') { await store.update('expenses', id, { payment_status: 'paid' }); await addBank({ date: d.date, description: p.description, amount: -amt, type: 'expense', reference_id: `expense:${id}` }); }
+      if (p.kind === 'sale') { await store.update('watches', id, { sale_payment: 'received', history: hist(w, 'Betaling ontvangen', d.date) }); await addBank({ date: d.date, description: `Verkoop ${wname(w)}`, amount: amt, type: 'sale', reference_id: `sale:${id}` }); }
+      if (p.kind === 'refund') { await store.update('watches', id, { supplier_return: { ...w.supplier_return, payment: 'received' }, history: hist(w, 'Terugbetaling verkoper ontvangen', d.date) }); await addBank({ date: d.date, description: `Terugbetaling verkoper · ${wname(w)}`, amount: amt, type: 'supplier_refund', reference_id: `refund:${id}` }); }
+      if (p.kind === 'customer-return') { const list = customerReturns(w).map((r, i) => i === p.index ? { ...r, payment: 'paid' } : r); await store.update('watches', id, { customer_returns: list, history: hist(w, 'Klant terugbetaald', d.date) }); await addBank({ date: d.date, description: `Terugbetaling klant · ${wname(w)}`, amount: -amt, type: 'customer_refund', reference_id: `customer-return:${id}:${p.index}` }); }
+      if (p.kind === 'purchase') { await store.update('watches', id, { purchase_payment: 'paid', history: hist(w, 'Inkoop betaald', d.date) }); await addBank({ date: d.date, description: `Inkoop ${wname(w)}`, amount: -amt, type: 'purchase', reference_id: `purchase:${id}` }); }
+      if (p.kind === 'batch') { await store.update('purchase_batches', id, { payment_status: 'paid' }); await addBank({ date: d.date, description: p.description, amount: -amt, type: 'purchase', reference_id: `batch:${id}` }); }
+      if (p.kind === 'expense') { await store.update('expenses', id, { payment_status: 'paid' }); await addBank({ date: d.date, description: p.description, amount: -amt, type: 'expense', reference_id: `expense:${id}` }); }
       toast('Verwerkt');
     },
   });
 }
 
 function bankEntryForm() {
+  const owed = vatOwed(S());
   openForm({
     eyebrow: 'Bank', title: 'Mutatie toevoegen', submit: 'Opslaan',
-    intro: 'Voor stortingen en opnames van vennoten en overige ontvangsten. Inkopen, verkopen en uitgaven worden automatisch geboekt.',
+    intro: 'Inkopen, verkopen en uitgaven worden automatisch geboekt. Gebruik dit alleen voor stortingen en opnames van vennoten, overige opbrengsten en btw-afdracht.',
     fields: [
-      { name: 'type', label: 'Soort', type: 'select', options: [['owner_deposit', 'Storting door vennoot'], ['owner_withdrawal', 'Opname door vennoot'], ['income', 'Overige ontvangst'], ['expense', 'Overige afschrijving (geen kosten)']] },
+      { name: 'type', label: 'Soort', type: 'select', options: [['owner_deposit', 'Storting door vennoot (bv. startkapitaal)'], ['owner_withdrawal', 'Opname door vennoot'], ['income', 'Overige opbrengst (rente, cashback)'], ['vat_payment', 'Btw-afdracht aan Belastingdienst']] },
       { name: 'partner', label: 'Vennoot', type: 'select', options: partners(), value: store.user?.name, show: d => d.type.startsWith('owner') },
       { name: 'date', label: 'Datum', type: 'date', value: today(), required: true },
-      { name: 'amount', label: 'Bedrag (€)', type: 'money', required: true },
+      { name: 'amount', label: 'Bedrag (€)', type: 'money', required: true, hint: owed > 0 ? `Nog af te dragen btw volgens de app: ${euro(owed)}` : '' },
       { name: 'description', label: 'Omschrijving', wide: true },
     ],
     onSubmit: async d => {
-      const out = ['owner_withdrawal', 'expense'].includes(d.type);
-      await addBank({ date: d.date, type: d.type, partner: d.type.startsWith('owner') ? d.partner : null, amount: Math.abs(n(d.amount)) * (out ? -1 : 1), description: d.description || (BANK_TYPES[d.type] + (d.type.startsWith('owner') ? ` · ${d.partner}` : '')) });
+      const amt = round2(d.amount);
+      if (amt <= 0) { toast('Vul een bedrag groter dan 0 in', 'bad'); return false; }
+      const out = ['owner_withdrawal', 'vat_payment'].includes(d.type);
+      await addBank({ date: d.date, type: d.type, partner: d.type.startsWith('owner') ? d.partner : null, amount: out ? -amt : amt, description: d.description || (BANK_TYPES[d.type] + (d.type.startsWith('owner') ? ` · ${d.partner}` : '')) });
       toast('Mutatie opgeslagen');
     },
   });
@@ -539,11 +624,11 @@ function balanceForm() {
   const cur = bankBalance(S());
   openForm({
     eyebrow: 'Bank', title: 'Saldo corrigeren', submit: 'Corrigeren',
-    intro: `Volgens de app is het saldo <b>${euro(cur)}</b>. Vul het echte saldo uit je bankapp in; het verschil wordt als correctie geboekt.`,
+    intro: `Volgens de app is het saldo <b>${euro(cur)}</b>. Vul het echte saldo uit je bankapp in; het verschil wordt geboekt als kasverschil en telt mee in het resultaat. Zoek eerst of er iets vergeten is (een uitgave, storting of verkoop), want dat is beter dan corrigeren. Startkapitaal? Gebruik dan "Storting door vennoot".`,
     fields: [{ name: 'balance', label: 'Werkelijk saldo (€)', type: 'money', allowNegative: true, required: true, value: cur }, { name: 'date', label: 'Datum', type: 'date', value: today() }],
     onSubmit: async d => {
       const diff = round2(n(d.balance) - cur); if (!diff) { toast('Saldo klopt al'); return; }
-      await addBank({ date: d.date, type: 'correction', amount: diff, description: `Saldocorrectie (${diff > 0 ? '+' : ''}${euro(diff)})` }); toast('Saldo gecorrigeerd');
+      await addBank({ date: d.date, type: 'correction', amount: diff, description: `Kasverschil (${diff > 0 ? '+' : ''}${euro(diff)})` }); toast('Saldo gecorrigeerd');
     },
   });
 }
@@ -554,12 +639,14 @@ async function watchDetail(id) {
   const s = S().settings;
   const batch = w.batch_id && S().purchase_batches.find(b => b.id === w.batch_id);
   const days = w.purchase_date ? daysBetween(w.purchase_date, w.sale_date || today()) : null;
+  const cap = capitalizedSum(S(), id), crs = customerReturns(w);
   const row = (l, v) => v === null || v === undefined || v === '' ? '' : `<div class="kv"><span>${l}</span><b>${v}</b></div>`;
   const acts = [];
   if (w.status === 'incoming' || w.status === 'customer_returning') acts.push(`<button class="btn primary" data-action="arrive" data-id="${id}">✓ Binnen</button>`);
   if (w.status === 'in_stock') acts.push(`<button class="btn primary" data-action="sale" data-id="${id}">Verkopen</button>`);
   if (w.status === 'sold') acts.push(`<button class="btn" data-action="customer-return" data-id="${id}">Retour van klant</button>`);
   if (['in_stock', 'incoming'].includes(w.status)) acts.push(`<button class="btn" data-action="supplier-return" data-id="${id}">Terug naar verkoper</button>`, `<button class="btn" data-action="write-off" data-id="${id}">Afschrijven</button>`);
+  if (w.status !== 'written_off') acts.push(`<button class="btn" data-action="watch-cost" data-id="${id}">＋ Kosten</button>`);
   acts.push(`<button class="btn" data-action="edit-watch" data-id="${id}">Bewerken</button>`, `<button class="btn ghost danger-text" data-action="delete-watch" data-id="${id}">Verwijderen</button>`);
   const dlg = openDialog(`<div class="modal-body wide">
     <header><div><div class="eyebrow">${esc(w.reference || 'Horloge')}</div><h2>${esc(wname(w))}</h2><div>${statusChip(w.status)}</div></div><button class="x" data-close aria-label="Sluiten">×</button></header>
@@ -569,14 +656,17 @@ async function watchDetail(id) {
         ${(() => { const r = row('Referentie', esc(w.reference)) + row('Serienummer', esc(w.serial)) + row('Bouwjaar', esc(w.year)) + row('Staat', esc(w.condition)) + row('Box & papieren', BOX_PAPERS[w.box_papers]); return r ? `<h3>Horloge</h3>${r}` : ''; })()}
         <h3>Inkoop</h3>
         ${row('Datum', fdate(w.purchase_date))}${row('Platform', esc(w.purchase_platform))}${row('Verkoper', esc(w.seller))}
-        ${row('Inkoopprijs', euro(w.purchase_price))}${row(batch ? 'Aandeel bundelkosten' : 'Extra kosten', euro(w.extra_costs))}${row('Kostprijs', `<span class="big-num">${euro(w.total_cost)}</span>`)}
+        ${row('Inkoopprijs', euro(w.purchase_price))}${row(batch ? 'Aandeel bundelkosten' : 'Extra kosten bij inkoop', euro(n(w.extra_costs) - cap))}${cap ? row('Kosten achteraf', `<button class="link" data-go="financien/expenses">${euro(cap)}</button>`) : ''}${row('Kostprijs', `<span class="big-num">${euro(w.total_cost)}</span>`)}
         ${row('Betaling', { paid: 'Betaald', pending: 'Nog te betalen', private: `Privé · ${esc(w.purchase_paid_by)}`, batch: batch ? `Via bundel (${batch.payment_status === 'pending' ? 'nog te betalen' : 'betaald'})` : 'Bundel' }[w.purchase_payment])}
         ${ACTIVE.includes(w.status) ? row('Geschatte waarde', w.estimated_value ? euro(w.estimated_value) : '—') + row('Dagen in bezit', days) : ''}
         ${w.status === 'sold' ? `<h3>Verkoop</h3>${row('Datum', fdate(w.sale_date))}${row('Platform', esc(w.sale_platform))}${row('Koper', esc(w.buyer))}${row('Verkoopprijs', euro(w.sale_price))}${row('Verkoopkosten', euro(w.sale_costs))}${s.vat_enabled && w.vat_scheme === 'margin' ? row('Btw (marge)', euro(marginVat(w, s))) : ''}${row('Winst', signed(watchProfit(w, s)))}${row('Doorlooptijd', `${days} dagen`)}${row('Betaling', w.sale_payment === 'pending' ? 'Nog te ontvangen' : 'Ontvangen')}` : ''}
         ${w.supplier_return ? `<h3>Retour naar verkoper</h3>${row('Datum', fdate(w.supplier_return.date))}${row('Terugbetaling', euro(w.supplier_return.refund))}${row('Status', w.supplier_return.payment === 'pending' ? 'Nog te ontvangen' : 'Ontvangen')}` : ''}
-        ${w.write_off ? `<h3>Afschrijving</h3>${row('Datum', fdate(w.write_off.date))}${row('Bedrag', euro(w.write_off.amount))}${row('Reden', esc(w.write_off.reason))}` : ''}
-        ${(w.receipt_path || batch?.receipt_path) ? `<p><button class="link" data-action="file" data-path="${esc(w.receipt_path || batch.receipt_path)}">📎 Bon bekijken</button></p>` : ''}
+        ${crs.length ? `<h3>Retouren van klanten</h3>${crs.map(r => row(`${fdate(r.date)}${r.reason ? ' · ' + esc(r.reason) : ''}`, `${euro(r.received)} ontvangen · ${euro(r.amount)} terug${r.payment === 'pending' ? ' (open)' : ''}`)).join('')}` : ''}
+        ${w.write_off ? `<h3>Afschrijving</h3>${row('Datum', fdate(w.write_off.date))}${row('Bedrag', euro(w.total_cost))}${row('Reden', esc(w.write_off.reason))}` : ''}
+        <p class="row-actions">${(w.receipt_path || batch?.receipt_path) ? `<button class="link" data-action="file" data-path="${esc(w.receipt_path || batch.receipt_path)}">📎 Bon inkoop bekijken</button>` : `<button class="link" data-action="receipt-add" data-table="${batch ? 'purchase_batches' : 'watches'}" data-id="${batch ? batch.id : id}">＋ Bon inkoop toevoegen</button>`}</p>
         ${w.notes ? `<h3>Notities</h3><p class="notes">${esc(w.notes)}</p>` : ''}
+        <h3>Documenten</h3>
+        <div class="linked">${items('doc').filter(d => d.watch_id === id).map(d => `<button class="chip" data-action="file" data-path="${esc(d.path)}">📄 ${esc(d.name)}</button>`).join('')}<button class="btn small" data-action="doc" data-watch="${id}">＋ Document</button></div>
         <h3>Marketing & taken</h3>
         <div class="linked">${items('post').filter(p => p.watch_id === id).map(p => `<button class="chip ps-${p.status}" data-action="edit-post" data-id="${p.id}">${esc(p.channel || '')} · ${fdate(p.date)}</button>`).join('')}${items('task').filter(t => t.watch_id === id && t.status !== 'done').map(t => `<button class="chip" data-action="edit-task" data-id="${t.id}">☐ ${esc(t.title)}</button>`).join('')}
           <button class="btn small" data-action="post" data-watch="${id}">＋ Post</button><button class="btn small" data-action="task" data-watch="${id}">＋ Taak</button></div>
@@ -625,16 +715,18 @@ const pages = {
     const pend = pendingPayments(st), recv = pend.filter(p => p.direction === 'in').reduce((a, p) => a + p.amount, 0), pay = pend.filter(p => p.direction === 'out').reduce((a, p) => a + p.amount, 0);
     const bal = bankBalance(st), acts = actionItems(st);
     const recent = [...st.watches].sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at))).slice(0, 6);
+    const rc = reconcile(st), owed = vatOwed(st);
     return head('Financieel overzicht', `Stand van zaken ${y.label}`) + `
+      <a class="check-banner ${rc.ok ? 'ok' : 'bad'}" data-go="financien/check">${rc.ok ? '✓ De boekhouding sluit: bank, voorraad, openstaande posten en resultaat kloppen met elkaar.' : `⚠︎ De controle vond ${rc.issues.length} ${rc.issues.length === 1 ? 'punt' : 'punten'} om na te kijken.`} <span>Controle ›</span></a>
       <section class="stats">
         ${stat(`Resultaat ${y.label}`, signed(c.result), `${c.soldCount} verkocht · omzet ${euro(c.revenue)}`, 'data-go="reports"')}
         ${stat('Voorraad', euro(all.stock), `${all.stockCount} ${all.stockCount === 1 ? 'horloge' : 'horloges'} · geschat ${euro(all.stockEstimated)}`, 'data-go="stock"')}
         ${stat('Banksaldo', euro(bal), `verwacht ${euro(bal + recv - pay)}`, 'data-go="bank"')}
-        ${stat('Openstaand', `<span class="good">+${euro(recv)}</span> <span class="bad">−${euro(pay)}</span>`, 'te ontvangen / te betalen', 'data-go="bank"')}
+        ${stat('Openstaand', `<span class="good">+${euro(recv)}</span> <span class="bad">−${euro(pay)}</span>`, `te ontvangen / te betalen${st.settings.vat_enabled ? ` · btw af te dragen ${euro(owed)}` : ''}`, 'data-go="bank"')}
       </section>
       <section class="cols">
         <div class="card"><div class="card-head"><h2>Actie nodig</h2><span class="badge">${acts.length}</span></div>
-          ${acts.length ? `<ul class="list">${acts.slice(0, 8).map(a => `<li ${a.watchId ? `data-action="watch" data-id="${a.watchId}"` : a.kind === 'receipt' ? `data-action="receipt-expense" data-id="${a.expenseId}"` : 'data-go="bank"'}><div><b>${esc(a.description)}</b><small>${a.reason} · ${fdate(a.date)}</small></div>${a.amount !== undefined ? `<span class="${a.direction === 'in' ? 'good' : 'bad'}">${a.direction === 'in' ? '+' : '−'}${euro(a.amount)}</span>` : '<span class="chev">›</span>'}</li>`).join('')}</ul>` : empty('Alles is bijgewerkt.')}
+          ${acts.length ? `<ul class="list">${acts.slice(0, 8).map(a => `<li ${a.watchId ? `data-action="watch" data-id="${a.watchId}"` : a.kind === 'receipt' ? `data-action="receipt-add" data-table="${a.table}" data-id="${a.recordId}"` : 'data-go="bank"'}><div><b>${esc(a.description)}</b><small>${a.reason} · ${fdate(a.date)}</small></div>${a.amount !== undefined ? `<span class="${a.direction === 'in' ? 'good' : 'bad'}">${a.direction === 'in' ? '+' : '−'}${euro(a.amount)}</span>` : '<span class="chev">›</span>'}</li>`).join('')}</ul>` : empty('Alles is bijgewerkt.')}
         </div>
         <div class="card"><div class="card-head"><h2>Recent</h2><a data-go="stock">Alle horloges ›</a></div>
           ${recent.length ? `<ul class="list">${recent.map(w => `<li data-action="watch" data-id="${w.id}"><div class="photo sm" data-photo="${esc(w.photo_path || '')}"><span>${esc(w.brand[0])}</span></div><div><b>${esc(wname(w))}</b><small>${STATUS[w.status]}</small></div><span>${w.status === 'sold' ? signed(watchProfit(w, st.settings)) : euro(w.total_cost)}</span></li>`).join('')}</ul>` : empty('Nog geen horloges. Begin met je eerste inkoop.', '<button class="btn primary" data-action="purchase">＋ Inkoop</button>')}
@@ -678,14 +770,15 @@ const pages = {
   expenses() {
     const st = S(), r = periodRange(ui.expensePeriod);
     const list = st.expenses.filter(e => inPeriod(e.date, r.from, r.to)).sort((a, b) => b.date.localeCompare(a.date));
-    const byCat = EXPENSE_CATEGORIES.map(cat => [cat, list.filter(e => e.category === cat).reduce((a, e) => a + n(e.amount), 0)]).filter(x => x[1]);
-    const total = list.reduce((a, e) => a + n(e.amount), 0);
+    const ops = list.filter(e => !e.capitalized);
+    const byCat = EXPENSE_CATEGORIES.map(cat => [cat, ops.filter(e => e.category === cat).reduce((a, e) => a + n(e.amount), 0)]).filter(x => x[1]);
+    const total = ops.reduce((a, e) => a + n(e.amount), 0), capTotal = list.filter(e => e.capitalized).reduce((a, e) => a + n(e.amount), 0);
     const pay = e => ({ paid: 'Zakelijk', pending: '<span class="chip warn">Te betalen</span>', private: `Privé · ${esc(e.paid_by)}`, offset: 'Verrekend' })[e.payment_status] || '';
-    return head('Uitgaven', `${euro(total)} · ${r.label}`, `${periodSelect(ui.expensePeriod, 'expensePeriod')}<button class="btn primary" data-action="expense">＋ Uitgave</button>`) + `
+    return head('Uitgaven', `${euro(total)} bedrijfskosten${capTotal ? ` · ${euro(capTotal)} opgeteld bij kostprijs horloges` : ''} · ${r.label}`, `${periodSelect(ui.expensePeriod, 'expensePeriod')}<button class="btn primary" data-action="expense">＋ Uitgave</button>`) + `
       ${byCat.length ? `<section class="pills">${byCat.map(([c, v]) => `<div><span>${esc(c)}</span><b>${euro(v)}</b></div>`).join('')}</section>` : ''}
       ${list.length ? `<div class="card flush"><table class="table"><thead><tr><th>Datum</th><th>Omschrijving</th><th>Categorie</th><th>Betaling</th><th>Bon</th><th class="r">Bedrag</th><th></th></tr></thead><tbody>
-        ${list.map(e => `<tr><td>${fdate(e.date)}</td><td><b>${esc(e.description)}</b>${e.watch_id ? `<small class="muted"> · ${esc(wname(watchById(e.watch_id)))}</small>` : ''}</td><td>${esc(e.category)}</td><td>${pay(e)}</td>
-          <td>${e.receipt_path ? `<button class="link" data-action="file" data-path="${esc(e.receipt_path)}">📎 Bekijk</button>` : `<button class="link muted" data-action="receipt-expense" data-id="${e.id}">＋ Bon</button>`}</td>
+        ${list.map(e => `<tr data-action="edit-expense" data-id="${e.id}"><td>${fdate(e.date)}</td><td><b>${esc(e.description)}</b>${e.watch_id ? `<small class="muted"> · ${esc(wname(watchById(e.watch_id)))}</small>` : ''}${e.capitalized ? ' <span class="chip">bij kostprijs</span>' : ''}</td><td>${esc(e.category)}</td><td>${pay(e)}</td>
+          <td>${e.receipt_path ? `<button class="link" data-action="file" data-path="${esc(e.receipt_path)}">📎 Bekijk</button>` : `<button class="link muted" data-action="receipt-add" data-table="expenses" data-id="${e.id}">＋ Bon</button>`}</td>
           <td class="r">${euro(e.amount)}</td><td class="r"><button class="x" data-action="delete-expense" data-id="${e.id}" title="Verwijderen">×</button></td></tr>`).join('')}
       </tbody></table></div>` : empty('Nog geen uitgaven in deze periode.')}`;
   },
@@ -694,9 +787,9 @@ const pages = {
     const st = S(), bal = bankBalance(st), pend = pendingPayments(st);
     const recv = pend.filter(p => p.direction === 'in').reduce((a, p) => a + p.amount, 0), pay = pend.filter(p => p.direction === 'out').reduce((a, p) => a + p.amount, 0);
     const entries = [...st.bank_entries].sort((a, b) => b.date.localeCompare(a.date) || String(b.created_at).localeCompare(String(a.created_at)));
-    const manual = ['owner_deposit', 'owner_withdrawal', 'income', 'correction', 'expense'];
+    const manual = MANUAL_BANK_TYPES, owed = vatOwed(st);
     return head('Bank', 'Zakelijke rekening, bijgewerkt door elke betaalde inkoop, verkoop en uitgave.', '<button class="btn" data-action="balance">Saldo corrigeren</button><button class="btn primary" data-action="bank-entry">＋ Mutatie</button>') + `
-      <section class="stats">${stat('Saldo', euro(bal))}${stat('Te ontvangen', `<span class="good">${euro(recv)}</span>`)}${stat('Te betalen', `<span class="bad">${euro(pay)}</span>`)}${stat('Verwacht saldo', euro(bal + recv - pay))}</section>
+      <section class="stats">${stat('Saldo', euro(bal))}${stat('Te ontvangen', `<span class="good">${euro(recv)}</span>`)}${stat('Te betalen', `<span class="bad">${euro(pay)}</span>`)}${stat('Verwacht saldo', euro(bal + recv - pay), st.settings.vat_enabled ? `daarna nog btw af te dragen: ${euro(owed)}` : '')}</section>
       <section class="card"><div class="card-head"><h2>Openstaand</h2></div>
         ${pend.length ? `<ul class="list">${pend.map(p => `<li><div><b>${esc(p.description)}</b><small>${p.direction === 'in' ? 'Te ontvangen' : 'Te betalen'} · ${fdate(p.date)}</small></div><span class="${p.direction === 'in' ? 'good' : 'bad'}">${p.direction === 'in' ? '+' : '−'}${euro(p.amount)}</span><button class="btn small" data-action="settle" data-id="${p.id}">Verwerken</button></li>`).join('')}</ul>` : empty('Niets openstaand.')}
       </section>
@@ -721,6 +814,9 @@ const pages = {
           ${line('Bedrijfskosten', `− ${euro(c.expenses)}`)}
           ${c.writeOff ? line('Afschrijvingen', `− ${euro(c.writeOff)}`) : ''}
           ${c.returnResult ? line('Resultaat retouren naar verkoper', euro(c.returnResult)) : ''}
+          ${c.customerReturnResult ? line('Resultaat retouren van klanten', euro(c.customerReturnResult)) : ''}
+          ${c.otherIncome ? line('Overige opbrengsten', euro(c.otherIncome)) : ''}
+          ${c.corrections ? line('Kasverschillen (saldocorrecties)', euro(c.corrections)) : ''}
           ${line('Nettowinst', signed(c.result), 'total')}
         </div></div>
         <div class="card"><div class="card-head"><h2>Kerncijfers</h2></div><div class="statement">
@@ -734,7 +830,7 @@ const pages = {
       </section>
       <section class="card"><div class="card-head"><h2>Resultaat per maand</h2><small class="muted">laatste 12 maanden</small></div>${barChart(monthlyResults(st, today().slice(0, 7)))}</section>
       <section class="cols">${group('Per merk', groupSold(st, 'brand', r))}${group('Per verkoopplatform', groupSold(st, 'sale_platform', r))}</section>
-      ${s.vat_enabled ? `<section class="card"><div class="card-head"><h2>Btw per kwartaal ${year}</h2><small class="muted">margeregeling, indicatief — laat je aangifte controleren</small></div><table class="table compact"><thead><tr><th>Kwartaal</th><th class="r">Verkocht</th><th class="r">Omzet</th><th class="r">Af te dragen btw</th></tr></thead><tbody>${quarterlyVat(st, year).map(q => `<tr><td>${q.quarter}</td><td class="r">${q.count}</td><td class="r">${euro(q.revenue)}</td><td class="r"><b>${euro(q.vat)}</b></td></tr>`).join('')}</tbody></table></section>` : ''}`;
+      ${s.vat_enabled ? `<section class="card"><div class="card-head"><h2>Btw per kwartaal ${year}</h2><small class="muted">margeregeling, indicatief — laat je aangifte controleren</small></div><table class="table compact"><thead><tr><th>Kwartaal</th><th class="r">Verkocht</th><th class="r">Omzet</th><th class="r">Btw (marge)</th><th class="r">Afgedragen in kwartaal</th></tr></thead><tbody>${quarterlyVat(st, year).map(q => `<tr><td>${q.quarter}</td><td class="r">${q.count}</td><td class="r">${euro(q.revenue)}</td><td class="r"><b>${euro(q.vat)}</b></td><td class="r">${euro(q.paid)}</td></tr>`).join('')}</tbody></table><p class="muted small-note">Nog af te dragen in totaal: <b>${euro(vatOwed(st))}</b>. Boek een betaling aan de Belastingdienst via Bank → ＋ Mutatie → Btw-afdracht.</p></section>` : ''}`;
   },
 
   partners() {
@@ -823,6 +919,7 @@ const ICON = {
   ideeen: '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5.6 1.2.6 2.2h6c0-1 0-1.7.6-2.2A6 6 0 0 0 12 3z"/>',
   taken: '<rect x="3.5" y="3.5" width="17" height="17" rx="3.5"/><path d="m8 12.5 2.8 2.8L16.5 9"/>',
   branding: '<circle cx="12" cy="12" r="9"/><circle cx="7.8" cy="11" r="1.2"/><circle cx="10.5" cy="7.2" r="1.2"/><circle cx="15.2" cy="8" r="1.2"/><path d="M13 21c-1.7 0-2.3-1.2-2.3-2.2 0-1.3 1-2.1 2.3-2.1h2.2A3.8 3.8 0 0 0 19 13"/>',
+  documenten: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',
   instellingen: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
   apps: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/>',
 };
@@ -830,11 +927,12 @@ const icon = (k, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill=
 
 const MODULES = {
   voorraad: { name: 'Voorraad', desc: 'Horloges, inkoop en verkoop', color: '#8a6a35', pages: [['stock', 'Voorraad'], ['sales', 'Verkopen']], quick: [['purchase', '＋ Inkoop', 'primary'], ['sale', '＋ Verkoop']] },
-  financien: { name: 'Financiën', desc: 'Resultaat, uitgaven, bank en vennoten', color: '#2f6b4f', pages: [['dashboard', 'Overzicht'], ['expenses', 'Uitgaven'], ['bank', 'Bank'], ['reports', 'Rapportages'], ['partners', 'Vennoten']], quick: [['expense', '＋ Uitgave', 'primary'], ['bank-entry', '＋ Bankmutatie']] },
+  financien: { name: 'Financiën', desc: 'Resultaat, uitgaven, bank en vennoten', color: '#2f6b4f', pages: [['dashboard', 'Overzicht'], ['expenses', 'Uitgaven'], ['bank', 'Bank'], ['reports', 'Rapportages'], ['partners', 'Vennoten'], ['check', 'Controle']], quick: [['expense', '＋ Uitgave', 'primary'], ['bank-entry', '＋ Bankmutatie']] },
   marketing: { name: 'Marketing', desc: 'Contentkalender en posts', color: '#9a4a3a', pages: [['mk-overview', 'Overzicht'], ['calendar', 'Kalender'], ['posts', 'Alle posts']], quick: [['post', '＋ Post', 'primary']] },
   ideeen: { name: 'Ideeën', desc: 'Ideeënbord en wishlist', color: '#a2802a', pages: [['ideas', 'Ideeënbord'], ['wishlist', 'Wishlist']], quick: [['idea', '＋ Idee', 'primary'], ['wish', '＋ Wens']] },
   taken: { name: 'Taken', desc: 'Wie doet wat, en wanneer', color: '#3c5f8a', pages: [['tasks', 'Takenbord']], quick: [['task', '＋ Taak', 'primary']] },
   branding: { name: 'Branding', desc: "Kleuren, logo's en vaste teksten", color: '#6b4f8a', pages: [['brand', 'Merkkit']], quick: [] },
+  documenten: { name: 'Documenten', desc: 'Bonnen, contracten en certificaten', color: '#46696a', pages: [['receipts', 'Bonnen'], ['docs', 'Documenten']], quick: [['doc', '＋ Document', 'primary']] },
   instellingen: { name: 'Instellingen', desc: 'Btw, winstverdeling en account', color: '#5f5a50', pages: [['settings', 'Instellingen']], quick: [] },
 };
 const moduleOf = p => Object.keys(MODULES).find(m => MODULES[m].pages.some(([k]) => k === p));
@@ -1007,16 +1105,18 @@ function launcher() {
     ideeen: `${ideas.length} ideeën · ${wishes.length} op wishlist`,
     taken: `${open.length} open · ${mine.length} voor jou`,
     branding: `${brand.filter(b => b.kind === 'color').length} kleuren · ${brand.filter(b => b.kind === 'asset').length} bestanden`,
+    documenten: `${items('doc').length} documenten · ${missingReceipts(st).length} bonnen ontbreken`,
     instellingen: `Ingelogd als ${me}`,
   };
-  const badge = { financien: acts.length, taken: late };
+  const rc = reconcile(st);
+  const badge = { financien: rc.ok ? pendingPayments(st).length : '!', taken: late, documenten: missingReceipts(st).length };
   const h = new Date().getHours(), greet = h < 6 ? 'Goedenacht' : h < 12 ? 'Goedemorgen' : h < 18 ? 'Goedemiddag' : 'Goedenavond';
   return `<div class="launch">
     <header class="launch-head"><div class="wordmark small">LUMAR<span>Watches</span></div>${meHtml()}</header>
     <div class="launch-hello"><h1>${greet}, ${esc(me)}</h1><p class="muted">${longDate()}</p></div>
     ${itemsBanner()}
     <div class="tiles">${Object.entries(MODULES).map(([k, m]) => `<a class="tile" data-go="${k}" style="--c:${m.color}">
-      <span class="tile-ico">${icon(k)}</span>${badge[k] ? `<span class="tile-badge ${k === 'taken' ? 'bad' : ''}">${badge[k]}</span>` : ''}
+      <span class="tile-ico">${icon(k)}</span>${badge[k] ? `<span class="tile-badge ${k === 'taken' || badge[k] === '!' ? 'bad' : ''}">${badge[k]}</span>` : ''}
       <h2>${m.name}</h2><p>${m.desc}</p><small>${stat[k]}</small></a>`).join('')}</div>
     <section class="cols">
       <div class="card"><div class="card-head"><h2>Jouw taken</h2><a data-go="taken">Takenbord ›</a></div>
@@ -1024,7 +1124,7 @@ function launcher() {
       <div class="card"><div class="card-head"><h2>Posts deze week</h2><a data-go="marketing/calendar">Kalender ›</a></div>
         ${upcoming.length ? `<ul class="list">${upcoming.slice(0, 6).map(p => `<li data-action="edit-post" data-id="${p.id}"><div><b>${esc(p.title)}</b><small>${esc(p.channel)} · ${fdate(p.date)}${p.time ? ' ' + p.time : ''}</small></div><span class="chip ps-${p.status}">${postLabel(p.status)}</span></li>`).join('')}</ul>` : empty('Niets gepland deze week.', '<button class="btn small" data-action="post">＋ Post</button>')}</div>
       <div class="card"><div class="card-head"><h2>Actie nodig</h2><a data-go="financien/bank">Bank ›</a></div>
-        ${acts.length ? `<ul class="list">${acts.slice(0, 6).map(a => `<li ${a.watchId ? `data-action="watch" data-id="${a.watchId}"` : a.kind === 'receipt' ? `data-action="receipt-expense" data-id="${a.expenseId}"` : 'data-go="financien/bank"'}><div><b>${esc(a.description)}</b><small>${a.reason}</small></div>${a.amount !== undefined ? `<span class="${a.direction === 'in' ? 'good' : 'bad'}">${a.direction === 'in' ? '+' : '−'}${euro(a.amount)}</span>` : '<span class="chev">›</span>'}</li>`).join('')}</ul>` : empty('Alles is bijgewerkt.')}</div>
+        ${acts.length ? `<ul class="list">${acts.slice(0, 6).map(a => `<li ${a.watchId ? `data-action="watch" data-id="${a.watchId}"` : a.kind === 'receipt' ? `data-action="receipt-add" data-table="${a.table}" data-id="${a.recordId}"` : 'data-go="financien/bank"'}><div><b>${esc(a.description)}</b><small>${a.reason}</small></div>${a.amount !== undefined ? `<span class="${a.direction === 'in' ? 'good' : 'bad'}">${a.direction === 'in' ? '+' : '−'}${euro(a.amount)}</span>` : '<span class="chev">›</span>'}</li>`).join('')}</ul>` : empty('Alles is bijgewerkt.')}</div>
     </section></div>`;
 }
 
@@ -1130,6 +1230,77 @@ Object.assign(pages, {
   },
 });
 
+// Documenten
+const DOC_CATS = ['KvK & bedrijf', 'Contract', 'Garantiebewijs', 'Certificaat', 'Factuur', 'Belasting', 'Overig'];
+function docForm(id, preset = {}) {
+  const d0 = id ? itemById(id) : { category: 'Overig', date: today(), ...preset };
+  openForm({
+    eyebrow: id ? 'Document' : 'Nieuw document', title: id ? d0.name : 'Document toevoegen',
+    fields: [
+      { name: 'name', label: 'Naam', required: true, wide: true, value: d0.name, placeholder: 'bv. KvK-uittreksel of garantiebewijs Omega' },
+      { name: 'category', label: 'Soort', type: 'select', options: DOC_CATS, value: d0.category },
+      { name: 'date', label: 'Datum', type: 'date', value: d0.date },
+      { name: 'valid_until', label: 'Geldig tot (optioneel)', type: 'date', value: d0.valid_until },
+      { name: 'watch_id', label: 'Hoort bij horloge (optioneel)', type: 'select', options: watchOptions(), value: d0.watch_id },
+      { name: 'file', label: id ? 'Nieuw bestand (optioneel)' : 'Bestand', type: 'file', accept: 'image/*,application/pdf,.docx,.xlsx' },
+      { name: 'notes', label: 'Notities', type: 'textarea', wide: true, value: d0.notes },
+    ],
+    onSubmit: async d => {
+      if (!d.file && !id) { toast('Kies een bestand', 'bad'); return false; }
+      const data = { ...d }; delete data.file;
+      if (d.file) { data.path = await store.upload(d.file, 'documents'); data.mime = d.file.type; data.filename = d.file.name; }
+      await saveItem('doc', id, data); toast('Document opgeslagen');
+    },
+    onDelete: id ? () => deleteItem(id, 'Document') : null,
+  });
+}
+
+Object.assign(pages, {
+  check() {
+    const st = S(), r = reconcile(st);
+    const line = (l, v, cls = '') => `<div class="statement-row ${cls}"><span>${l}</span><b>${v}</b></div>`;
+    return head('Controle', 'Rekent na of alle boekingen op elkaar aansluiten. Deze controle draait automatisch bij elke wijziging.') + `
+      <div class="check-banner big ${r.ok ? 'ok' : 'bad'}">${r.ok ? '✓ Alles klopt. De boekhouding sluit tot op de cent.' : `⚠︎ ${r.issues.length} ${r.issues.length === 1 ? 'punt' : 'punten'} om na te kijken. Zie de lijst hieronder.`}</div>
+      <section class="cols">
+        <div class="card"><div class="card-head"><h2>Wat LUMAR heeft</h2></div><div class="statement">
+          ${line('Banksaldo', euro(r.bank))}${line('Voorraad tegen kostprijs', euro(r.stock))}${line('Nog te ontvangen', euro(r.receivable))}
+          ${line('Nog te betalen', `− ${euro(r.payable)}`)}${line('Btw nog af te dragen', `− ${euro(r.vat)}`)}${line('Totaal', euro(r.assets), 'total')}
+        </div></div>
+        <div class="card"><div class="card-head"><h2>Waar dat vandaan komt</h2></div><div class="statement">
+          ${line('Stortingen vennoten', euro(r.deposits))}${line('Privé voorgeschoten door vennoten', euro(r.privatePaid))}${line('Opnames vennoten', `− ${euro(r.withdrawals)}`)}
+          ${line('Resultaat tot nu toe', signed(r.result))}${line('Totaal', euro(r.equity), 'total')}
+        </div></div>
+      </section>
+      <section class="card"><div class="card-head"><h2>Verschil</h2><b class="${r.diff ? 'bad' : 'good'}">${euro(r.diff)}</b></div>
+        <p class="muted">Beide totalen moeten precies gelijk zijn. Elke euro die het bedrijf heeft, komt van een storting, iets wat een vennoot heeft voorgeschoten of van de winst. Daarnaast wordt elke inkoop, verkoop, retour en uitgave gecontroleerd op de juiste bankmutatie.</p>
+        ${r.issues.length ? `<table class="table compact"><thead><tr><th>Onderdeel</th><th>Bevinding</th></tr></thead><tbody>${r.issues.map(i => `<tr><td><span class="chip late">${esc(i.area)}</span></td><td>${esc(i.text)}</td></tr>`).join('')}</tbody></table>` : ''}
+      </section>`;
+  },
+
+  docs() {
+    const all = items('doc'), f = ui.docFilter || 'all';
+    const list = all.filter(d => f === 'all' || d.category === f).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const soon = addDays(today(), 30);
+    const validity = d => !d.valid_until ? '' : d.valid_until < today() ? `<span class="chip late">Verlopen ${fdate(d.valid_until)}</span>` : d.valid_until <= soon ? `<span class="chip warn">Tot ${fdate(d.valid_until)}</span>` : `<span class="chip">Tot ${fdate(d.valid_until)}</span>`;
+    return head('Documenten', 'KvK, contracten, garantiebewijzen, certificaten en andere belangrijke papieren.', '<button class="btn primary" data-action="doc">＋ Document</button>') + itemsBanner() + `
+      <div class="toolbar">${tabsHtml('docFilter', [['all', 'Alles', all.length], ...DOC_CATS.filter(c => all.some(d => d.category === c)).map(c => [c, c, all.filter(d => d.category === c).length])])}</div>
+      ${list.length ? `<div class="card flush"><table class="table"><thead><tr><th>Naam</th><th>Soort</th><th>Datum</th><th>Horloge</th><th>Geldigheid</th><th></th></tr></thead><tbody>
+        ${list.map(d => `<tr data-action="edit-doc" data-id="${d.id}"><td><b>${esc(d.name)}</b>${d.notes ? `<br><small class="muted">${esc(d.notes)}</small>` : ''}</td><td>${esc(d.category)}</td><td>${fdate(d.date)}</td><td>${d.watch_id && watchById(d.watch_id) ? esc(wname(watchById(d.watch_id))) : ''}</td><td>${validity(d)}</td><td class="r"><button class="link" data-action="file" data-path="${esc(d.path)}">Openen ↗</button></td></tr>`).join('')}
+      </tbody></table></div>` : empty('Nog geen documenten.', '<button class="btn primary" data-action="doc">＋ Eerste document</button>')}`;
+  },
+
+  receipts() {
+    const all = receiptRecords(S()), f = ui.receiptFilter || 'missing';
+    const missing = all.filter(r => !r.path), list = f === 'missing' ? missing : all;
+    return head('Bonnen', 'Alle inkopen en uitgaven met hun bon of factuur. Bewaar deze minimaal 7 jaar voor de Belastingdienst.') + `
+      <section class="stats">${stat('Boekingen', all.length)}${stat('Met bon', all.length - missing.length)}${stat('Bon ontbreekt', `<span class="${missing.length ? 'bad' : 'good'}">${missing.length}</span>`)}</section>
+      <div class="toolbar">${tabsHtml('receiptFilter', [['missing', 'Bon ontbreekt', missing.length], ['all', 'Alles', all.length]])}</div>
+      ${list.length ? `<div class="card flush"><table class="table"><thead><tr><th>Datum</th><th>Omschrijving</th><th>Soort</th><th class="r">Bedrag</th><th>Bon</th></tr></thead><tbody>
+        ${list.map(r => `<tr><td>${fdate(r.date)}</td><td><b>${esc(r.description)}</b></td><td>${esc(r.kind)}</td><td class="r">${euro(r.amount)}</td><td>${r.path ? `<button class="link" data-action="file" data-path="${esc(r.path)}">📎 Bekijk</button>` : `<button class="btn small" data-action="receipt-add" data-table="${r.table}" data-id="${r.id}">＋ Bon</button>`}</td></tr>`).join('')}
+      </tbody></table></div>` : empty(f === 'missing' ? 'Van alle boekingen is een bon aanwezig.' : 'Nog geen boekingen.')}`;
+  },
+});
+
 // ───────────── Klikken ─────────────
 document.addEventListener('click', async e => {
   const nav = e.target.closest('[data-page],[data-go]');
@@ -1171,6 +1342,11 @@ document.addEventListener('click', async e => {
       case 'delete-watch': await deleteWatch(id); break;
       case 'delete-expense': await deleteExpense(id); break;
       case 'receipt-expense': addReceiptForm('expenses', id); break;
+      case 'receipt-add': inDetail?.close(); addReceiptForm(a.dataset.table, id); break;
+      case 'edit-expense': editExpenseForm(id); break;
+      case 'watch-cost': inDetail?.close(); expenseForm({ watch_id: id, capitalized: true, category: 'Reparatie & service' }); break;
+      case 'doc': inDetail?.close(); docForm(null, a.dataset.watch ? { watch_id: a.dataset.watch } : {}); break;
+      case 'edit-doc': inDetail?.close(); docForm(id); break;
       case 'file': await openFile(a.dataset.path); break;
       case 'settle': settleForm(id); break;
       case 'bank-entry': bankEntryForm(); break;
@@ -1226,6 +1402,7 @@ async function boot() {
     $('#authHint').innerHTML = '<b>Demomodus</b> — er is nog geen database gekoppeld. Gegevens blijven alleen in deze browser. Vul je naam in als e-mail (bv. <i>luuk@lumar.nl</i>); een wachtwoord is niet nodig.';
     $('#loginForm [name=email]').type = 'text';
   }
+  window.lumar = { state: () => store.state }; // voor controles en tests
   let ok = false;
   try { ok = await store.init(); } catch (err) { showAuth(err.message); return; }
   ok ? showApp() : showAuth();

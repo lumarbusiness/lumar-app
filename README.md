@@ -2,7 +2,7 @@
 
 Een installeerbare web-app (PWA) voor de administratie van LUMAR Watches. Werkt op Windows en Mac, en Luuk en Marijn zien dezelfde gegevens.
 
-**Startscherm met apps:** Voorraad, Financiën, Marketing, Ideeën, Taken, Branding en Instellingen. Elke app heeft dezelfde opbouw en ze delen dezelfde gegevens (bijvoorbeeld: een wens op de wishlist wordt met één klik een inkoop, een post of taak hangt aan een horloge).
+**Startscherm met apps:** Voorraad, Financiën, Marketing, Ideeën, Taken, Branding, Documenten en Instellingen. Elke app heeft dezelfde opbouw en ze delen dezelfde gegevens (bijvoorbeeld: een wens op de wishlist wordt met één klik een inkoop, een post of taak hangt aan een horloge).
 
 **Wat erin zit:** dashboard, voorraad (met foto's), inkoop van één horloge of een bundel (gezamenlijke kosten worden verdeeld), verkoop met winst- en btw-berekening, retouren (van klant en naar verkoper), afschrijven, uitgaven met bonnen, bank met openstaande posten, rapportages (resultatenrekening, per maand, per merk en platform, btw per kwartaal), kapitaal per vennoot en CSV-export.
 
@@ -54,6 +54,16 @@ Daarna open je LUMAR gewoon via het icoon, als een normaal programma. Updates ko
 - **Bank:** alles wat als *betaald* wordt ingevoerd, maakt automatisch een bankmutatie aan. *Nog te betalen/ontvangen* komt onder Openstaand en verwerk je later met één klik.
 - **Privé betaald:** inkopen of kosten die een vennoot zelf voorschiet, tellen mee als inbreng van die vennoot.
 - **Kapitaal per vennoot** = stortingen + privé betaald − opnames + winstaandeel (standaard 50/50).
+
+## Controle (Financiën → Controle)
+De app rekent bij elke wijziging na of de boekhouding sluit:
+**bank + voorraad + nog te ontvangen − nog te betalen − btw-schuld = stortingen + privé voorgeschoten − opnames + resultaat.**
+Daarnaast wordt elke inkoop, bundel, verkoop, retour en uitgave gecontroleerd op precies één juiste bankmutatie.
+Staat er iets niet goed, dan zie je dat op het overzicht en op het blokje Financiën.
+
+- **Kosten achteraf** (service, reparatie, band): open het horloge → **＋ Kosten**. Ze tellen bij de kostprijs, niet als losse bedrijfskosten.
+- **Btw-afdracht** boek je via Bank → ＋ Mutatie → Btw-afdracht.
+- **Saldocorrecties** tellen als kasverschil in het resultaat; zoek eerst naar een vergeten boeking.
 
 ## Bestanden
 | Bestand | Inhoud |

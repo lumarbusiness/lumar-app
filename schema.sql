@@ -196,3 +196,9 @@ do $$ begin
   alter publication supabase_realtime add table public.items;
 exception when duplicate_object then null; end $$;
 update storage.buckets set allowed_mime_types = array['image/jpeg','image/png','image/webp','image/svg+xml','application/pdf'] where id = 'lumar-files';
+
+-- ───────────── Boekhouding: kosten achteraf en retouren van klanten ─────────────
+alter table public.expenses add column if not exists capitalized boolean not null default false;
+alter table public.watches add column if not exists customer_returns jsonb not null default '[]'::jsonb;
+update storage.buckets set allowed_mime_types = array['image/jpeg','image/png','image/webp','image/svg+xml','application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'] where id = 'lumar-files';
