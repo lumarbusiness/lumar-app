@@ -97,8 +97,8 @@ async function cloudStore(config, onRemoteChange) {
     channel.subscribe();
   }
 
+  Object.defineProperty(store, 'user', { get: () => user });
   Object.assign(store, {
-    get user() { return user; },
     async init() {
       const { data } = await sb.auth.getSession();
       const ok = await setUser(data.session);
