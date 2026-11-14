@@ -15,6 +15,8 @@ create or replace function public.is_member() returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.members where user_id = auth.uid());
 $$;
+revoke execute on function public.is_member() from public, anon;
+grant execute on function public.is_member() to authenticated;
 
 -- ───────────── Instellingen (één rij per sleutel) ─────────────
 create table if not exists public.settings (
