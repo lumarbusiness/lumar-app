@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>LUMAR</title>
+  <meta name="theme-color" content="#14130f">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Inloggen -->
+  <section id="auth" class="auth" hidden>
+    <form id="loginForm" class="auth-card">
+      <div class="wordmark">LUMAR<span>Watches</span></div>
+      <p class="muted" id="authHint">Log in met je eigen account.</p>
+      <label>E-mailadres<input name="email" type="email" autocomplete="username" required></label>
+      <label>Wachtwoord<input name="password" type="password" autocomplete="current-password"></label>
+      <button class="btn primary wide" type="submit">Inloggen</button>
+      <p class="auth-status" id="authStatus" role="status"></p>
+    </form>
+  </section>
+
+  <!-- App -->
+  <div id="app" class="shell" hidden>
+    <aside class="sidebar">
+      <div class="wordmark small">LUMAR<span>Watches</span></div>
+      <nav id="nav">
+        <a data-page="dashboard"><i>◐</i>Dashboard</a>
+        <a data-page="stock"><i>◷</i>Voorraad</a>
+        <a data-page="sales"><i>↗</i>Verkopen</a>
+        <a data-page="expenses"><i>↘</i>Uitgaven</a>
+        <a data-page="bank"><i>▤</i>Bank</a>
+        <a data-page="reports"><i>▥</i>Rapportages</a>
+        <a data-page="partners"><i>⚭</i>Vennoten</a>
+        <a data-page="settings"><i>⚙</i>Instellingen</a>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="quick">
+          <button class="btn primary wide" data-action="purchase">＋ Inkoop</button>
+          <button class="btn wide" data-action="sale">＋ Verkoop</button>
+          <button class="btn wide" data-action="expense">＋ Uitgave</button>
+        </div>
+        <div class="me" id="me"></div>
+      </div>
+    </aside>
+    <main id="main" class="main"></main>
+  </div>
+
+  <div id="modalRoot"></div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

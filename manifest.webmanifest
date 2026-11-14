@@ -1,0 +1,17 @@
+{
+  "name": "LUMAR Watches",
+  "short_name": "LUMAR",
+  "description": "Voorraad, inkoop, verkoop en financiën van LUMAR Watches",
+  "start_url": "./#dashboard",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#14130f",
+  "theme_color": "#14130f",
+  "lang": "nl",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
