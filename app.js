@@ -864,7 +864,7 @@ $('#loginForm').addEventListener('submit', async e => {
   const d = formValues(e.target), btn = $('button', e.target);
   btn.disabled = true; $('#authStatus').textContent = 'Bezig met inloggen…';
   try { await store.signIn(d.email.trim(), d.password); showApp(); }
-  catch (err) { $('#authStatus').textContent = /invalid/i.test(err.message) ? 'E-mailadres of wachtwoord klopt niet.' : err.message; }
+  catch (err) { $('#authStatus').textContent = /invalid login credentials/i.test(err.message) ? 'E-mailadres of wachtwoord klopt niet.' : `Inloggen mislukt: ${err.message}`; }
   finally { btn.disabled = false; }
 });
 
