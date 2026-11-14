@@ -759,7 +759,7 @@ const pages = {
       </section>
       <section class="card"><div class="card-head"><h2>App</h2></div>
         <p>Ingelogd als <b>${esc(store.user?.name)}</b>${store.user?.email ? ` (${esc(store.user.email)})` : ''}.</p>
-        <p class="muted">${store.mode === 'demo' ? '⚠︎ Demomodus: de gegevens staan alleen in deze browser. Koppel Supabase via js/config.js om samen te werken.' : 'Verbonden met de gedeelde LUMAR-database. Wijzigingen zijn direct zichtbaar voor jullie allebei.'}</p>
+        <p class="muted">${store.mode === 'demo' ? '⚠︎ Demomodus: de gegevens staan alleen in deze browser. Koppel Supabase via config.js om samen te werken.' : 'Verbonden met de gedeelde LUMAR-database. Wijzigingen zijn direct zichtbaar voor jullie allebei.'}</p>
         <div class="row-actions">
           <button class="btn" data-action="install" ${window.__installPrompt ? '' : 'hidden'} id="installBtn">⤓ App installeren</button>
           <button class="btn" data-action="logout">Uitloggen</button>
