@@ -2,6 +2,8 @@
 
 Een installeerbare web-app (PWA) voor de administratie van LUMAR Watches. Werkt op Windows en Mac, en Luuk en Marijn zien dezelfde gegevens.
 
+**Startscherm met apps:** Voorraad, Financiën, Marketing, Ideeën, Taken, Branding en Instellingen. Elke app heeft dezelfde opbouw en ze delen dezelfde gegevens (bijvoorbeeld: een wens op de wishlist wordt met één klik een inkoop, een post of taak hangt aan een horloge).
+
 **Wat erin zit:** dashboard, voorraad (met foto's), inkoop van één horloge of een bundel (gezamenlijke kosten worden verdeeld), verkoop met winst- en btw-berekening, retouren (van klant en naar verkoper), afschrijven, uitgaven met bonnen, bank met openstaande posten, rapportages (resultatenrekening, per maand, per merk en platform, btw per kwartaal), kapitaal per vennoot en CSV-export.
 
 **Zonder installatie uitproberen:** open de map met een lokale webserver (bijvoorbeeld `npx serve` of `python -m http.server`) en ga naar `http://localhost:8000`. Zonder Supabase-gegevens draait de app in demomodus: alles blijft dan in je eigen browser.
@@ -24,6 +26,9 @@ Een installeerbare web-app (PWA) voor de administratie van LUMAR Watches. Werkt 
 5. Ga naar **Project Settings → API** (of **Data API**) en kopieer de **Project URL** en de **anon public key**. Plak ze in `config.js`.
    *De anon key mag in de code staan: alleen ingelogde leden kunnen gegevens zien, dat regelt de database zelf.*
 6. Zet onder **Authentication → Sign In / Providers** de optie **Allow new users to sign up** uit, zodat niemand anders een account kan aanmaken.
+
+### 1b. Update voor de apps (bestaande installatie)
+Heb je de database al eerder ingericht? Voer dan `update-modules.sql` één keer uit in **SQL Editor → New query → Run**. Nodig voor Taken, Ideeën, Marketing en Branding.
 
 ### 2. GitHub: de code en het online zetten
 1. Maak een (gratis) account op [github.com](https://github.com) en klik op **New repository**. Noem hem `lumar-app` en kies **Public** (gratis GitHub Pages werkt alleen met een openbare repository; jullie gegevens blijven privé, die staan achter de inlog in Supabase).

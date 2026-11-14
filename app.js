@@ -8,8 +8,8 @@ import {
 
 // ───────────── Hulpjes ─────────────
 let store;
-let page = 'dashboard';
-const ui = { stockFilter: 'active', stockSearch: '', period: 'year', salesPeriod: 'year', expensePeriod: 'year' };
+let route = { mod: 'home', page: null };
+const ui = { stockFilter: 'active', stockSearch: '', period: 'year', salesPeriod: 'year', expensePeriod: 'year', taskOwner: 'all', ideaFilter: 'open', wishFilter: 'searching', postFilter: 'open', calMonth: null };
 const $ = (s, el = document) => el.querySelector(s);
 const S = () => store.state;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -94,14 +94,15 @@ function openDialog(inner, cls = '') {
   return dlg;
 }
 
-function openForm({ eyebrow = '', title, intro = '', fields, submit = 'Opslaan', danger = false, onSubmit, onInput }) {
+function openForm({ eyebrow = '', title, intro = '', fields, submit = 'Opslaan', danger = false, onSubmit, onInput, onDelete }) {
   const dlg = openDialog(`<form class="modal-body" novalidate>
     <header><div><div class="eyebrow">${esc(eyebrow)}</div><h2>${esc(title)}</h2></div><button type="button" class="x" data-close aria-label="Sluiten">×</button></header>
     ${intro ? `<p class="muted intro">${intro}</p>` : ''}
     <div class="grid">${fields.map(fieldHtml).join('')}</div>
-    <footer><button type="button" class="btn" data-close>Annuleren</button><button class="btn ${danger ? 'danger' : 'primary'}" type="submit">${esc(submit)}</button></footer>
+    <footer>${onDelete ? '<button type="button" class="btn ghost danger-text left" data-del>Verwijderen</button>' : ''}<button type="button" class="btn" data-close>Annuleren</button><button class="btn ${danger ? 'danger' : 'primary'}" type="submit">${esc(submit)}</button></footer>
   </form>`);
   const form = $('form', dlg);
+  $('[data-del]', dlg)?.addEventListener('click', async () => { try { if (await onDelete() !== false) { dlg.close(); render(); } } catch (err) { toast(err.message, 'bad'); } });
   const sync = () => {
     const d = formValues(form);
     for (const f of fields) if (f.show && f.name) {
@@ -146,7 +147,8 @@ async function removeBankRef(ref) {
 const paymentOptions = [['paid', 'Betaald vanaf zakelijke rekening'], ['pending', 'Nog te betalen'], ['private', 'Privé betaald door vennoot']];
 
 // Inkoop (één horloge of bundel)
-function purchaseForm() {
+function purchaseForm(opts = {}) {
+  const pre = opts.prefill || {};
   const watchFields = i => `
     <div class="batch-row" data-row="${i}">
       <div class="batch-no">${i + 1}</div>
@@ -164,9 +166,9 @@ function purchaseForm() {
     eyebrow: 'Nieuwe inkoop', title: 'Horloge inkopen', submit: 'Inkoop opslaan',
     fields: [
       { name: 'mode', label: 'Soort inkoop', type: 'select', options: [['single', 'Eén horloge'], ['batch', 'Bundel: meerdere horloges in één bestelling']], wide: true },
-      { name: 'brand', label: 'Merk', required: true, list: brands, show: d => d.mode === 'single' },
-      { name: 'model', label: 'Model', required: true, show: d => d.mode === 'single' },
-      { name: 'reference', label: 'Referentienummer', show: d => d.mode === 'single' },
+      { name: 'brand', label: 'Merk', required: true, list: brands, value: pre.brand, show: d => d.mode === 'single' },
+      { name: 'model', label: 'Model', required: true, value: pre.model, show: d => d.mode === 'single' },
+      { name: 'reference', label: 'Referentienummer', value: pre.reference, show: d => d.mode === 'single' },
       { name: 'serial', label: 'Serienummer', show: d => d.mode === 'single' },
       { name: 'year', label: 'Bouwjaar', placeholder: 'bv. 2019 of ca. 1975', show: d => d.mode === 'single' },
       { name: 'condition', label: 'Staat', type: 'select', options: ['', 'Nieuw', 'Als nieuw', 'Zeer goed', 'Goed', 'Redelijk', 'Defect / voor onderdelen'], show: d => d.mode === 'single' },
@@ -176,9 +178,9 @@ function purchaseForm() {
       { name: 'platform', label: 'Platform', type: 'select', options: PLATFORMS },
       { name: 'seller', label: 'Verkoper', placeholder: 'Naam of gebruikersnaam', show: d => d.mode === 'single' },
       { name: 'reference_no', label: 'Bestelnummer / notitie', show: d => d.mode === 'batch' },
-      { name: 'purchase_price', label: 'Inkoopprijs (€)', type: 'money', required: true, show: d => d.mode === 'single', hint: 'Wat je aan de verkoper betaalt' },
+      { name: 'purchase_price', label: 'Inkoopprijs (€)', type: 'money', required: true, value: pre.purchase_price, show: d => d.mode === 'single', hint: 'Wat je aan de verkoper betaalt' },
       { name: 'extra_costs', label: 'Extra kosten (€)', type: 'money', show: d => d.mode === 'single', hint: 'Verzending, kopersbescherming, service' },
-      { name: 'estimated_value', label: 'Geschatte verkoopwaarde (€)', type: 'money', show: d => d.mode === 'single' },
+      { name: 'estimated_value', label: 'Geschatte verkoopwaarde (€)', type: 'money', value: pre.estimated_value, show: d => d.mode === 'single' },
       { name: 'shipping', label: 'Verzendkosten (€)', type: 'money', show: d => d.mode === 'batch' },
       { name: 'protection', label: 'Kopersbescherming (€)', type: 'money', show: d => d.mode === 'batch' },
       { name: 'other', label: 'Overige gezamenlijke kosten (€)', type: 'money', show: d => d.mode === 'batch' },
@@ -193,7 +195,7 @@ function purchaseForm() {
       { name: 'notes', label: 'Notities', type: 'textarea', wide: true, show: d => d.mode === 'single' },
     ],
     onInput: (d, form) => updateBatch(d, form),
-    onSubmit: async (d, form) => d.mode === 'batch' ? saveBatch(d, form) : saveSingle(d),
+    onSubmit: async (d, form) => { const r = d.mode === 'batch' ? await saveBatch(d, form) : await saveSingle(d); if (r !== false) await opts.after?.(); return r; },
   });
   const rowsEl = $('.batch-rows', f.form);
   f.form.addEventListener('click', e => {
@@ -575,6 +577,9 @@ async function watchDetail(id) {
         ${w.write_off ? `<h3>Afschrijving</h3>${row('Datum', fdate(w.write_off.date))}${row('Bedrag', euro(w.write_off.amount))}${row('Reden', esc(w.write_off.reason))}` : ''}
         ${(w.receipt_path || batch?.receipt_path) ? `<p><button class="link" data-action="file" data-path="${esc(w.receipt_path || batch.receipt_path)}">📎 Bon bekijken</button></p>` : ''}
         ${w.notes ? `<h3>Notities</h3><p class="notes">${esc(w.notes)}</p>` : ''}
+        <h3>Marketing & taken</h3>
+        <div class="linked">${items('post').filter(p => p.watch_id === id).map(p => `<button class="chip ps-${p.status}" data-action="edit-post" data-id="${p.id}">${esc(p.channel || '')} · ${fdate(p.date)}</button>`).join('')}${items('task').filter(t => t.watch_id === id && t.status !== 'done').map(t => `<button class="chip" data-action="edit-task" data-id="${t.id}">☐ ${esc(t.title)}</button>`).join('')}
+          <button class="btn small" data-action="post" data-watch="${id}">＋ Post</button><button class="btn small" data-action="task" data-watch="${id}">＋ Taak</button></div>
       </div>
     </div>
     ${(w.history || []).length ? `<h3>Geschiedenis</h3><ol class="timeline">${[...w.history].reverse().map(h => `<li><span>${fdate(h.date)}</span>${esc(h.text)}${h.by ? ` <em>· ${esc(h.by)}</em>` : ''}</li>`).join('')}</ol>` : ''}
@@ -619,9 +624,8 @@ const pages = {
     const st = S(), y = periodRange('year'), c = calc(st, y), all = calc(st);
     const pend = pendingPayments(st), recv = pend.filter(p => p.direction === 'in').reduce((a, p) => a + p.amount, 0), pay = pend.filter(p => p.direction === 'out').reduce((a, p) => a + p.amount, 0);
     const bal = bankBalance(st), acts = actionItems(st);
-    const h = new Date().getHours(), greet = h < 12 ? 'Goedemorgen' : h < 18 ? 'Goedemiddag' : 'Goedenavond';
     const recent = [...st.watches].sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at))).slice(0, 6);
-    return head(`${greet}, ${esc(store.user?.name || '')}`, 'Zo staat LUMAR ervoor.') + `
+    return head('Financieel overzicht', `Stand van zaken ${y.label}`) + `
       <section class="stats">
         ${stat(`Resultaat ${y.label}`, signed(c.result), `${c.soldCount} verkocht · omzet ${euro(c.revenue)}`, 'data-go="reports"')}
         ${stat('Voorraad', euro(all.stock), `${all.stockCount} ${all.stockCount === 1 ? 'horloge' : 'horloges'} · geschat ${euro(all.stockEstimated)}`, 'data-go="stock"')}
@@ -771,17 +775,29 @@ const pages = {
 
 function render() {
   if (!store?.user) return;
+  const home = route.mod === 'home';
+  $('#app').classList.toggle('home', home);
+  $('#sidebar').innerHTML = home ? '' : sidebarHtml();
   const main = $('#main');
   const scroll = main.scrollTop;
-  main.innerHTML = pages[page]();
+  main.innerHTML = home ? launcher() : pages[route.page]();
   main.scrollTop = scroll;
-  document.querySelectorAll('#nav a').forEach(a => a.classList.toggle('on', a.dataset.page === page));
   loadPhotos(main);
   const search = $('#stockSearch');
   if (search) search.oninput = () => { ui.stockSearch = search.value; const pos = search.selectionStart; render(); const s2 = $('#stockSearch'); s2.focus(); s2.setSelectionRange(pos, pos); };
 }
 
-function go(p) { page = pages[p] ? p : 'dashboard'; location.hash = page; $('#main').scrollTop = 0; render(); }
+const routeHash = () => route.mod === 'home' ? 'home' : `${route.mod}/${route.page}`;
+function go(target = 'home') {
+  let [mod, pg] = String(target || 'home').split('/');
+  if (!MODULES[mod]) { const m = moduleOf(mod); if (m) { pg = mod; mod = m; } else { mod = 'home'; pg = null; } }
+  if (mod !== 'home' && !MODULES[mod].pages.some(([k]) => k === pg)) pg = MODULES[mod].pages[0][0];
+  const changed = mod !== route.mod || pg !== route.page;
+  route = { mod, page: pg };
+  if (location.hash.slice(1) !== routeHash()) location.hash = routeHash();
+  if (changed) $('#main').scrollTop = 0;
+  render();
+}
 
 function exportCsv() {
   const st = S();
@@ -799,6 +815,321 @@ function exportCsv() {
   toast('Export gedownload');
 }
 
+// ───────────── Apps (startscherm en modules) ─────────────
+const ICON = {
+  voorraad: '<path d="M3 7.5 12 3l9 4.5v9L12 21l-9-4.5z"/><path d="m3 7.5 9 4.5 9-4.5M12 12v9"/>',
+  financien: '<path d="M3.5 20.5h17"/><path d="M6.5 17v-5M11 17V7.5M15.5 17v-7M20 17V4.5"/>',
+  marketing: '<path d="M4 10v4h3l7 5V5l-7 5z"/><path d="M17.5 9a4 4 0 0 1 0 6"/>',
+  ideeen: '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5.6 1.2.6 2.2h6c0-1 0-1.7.6-2.2A6 6 0 0 0 12 3z"/>',
+  taken: '<rect x="3.5" y="3.5" width="17" height="17" rx="3.5"/><path d="m8 12.5 2.8 2.8L16.5 9"/>',
+  branding: '<circle cx="12" cy="12" r="9"/><circle cx="7.8" cy="11" r="1.2"/><circle cx="10.5" cy="7.2" r="1.2"/><circle cx="15.2" cy="8" r="1.2"/><path d="M13 21c-1.7 0-2.3-1.2-2.3-2.2 0-1.3 1-2.1 2.3-2.1h2.2A3.8 3.8 0 0 0 19 13"/>',
+  instellingen: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
+  apps: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/>',
+};
+const icon = (k, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k] || ''}</svg>`;
+
+const MODULES = {
+  voorraad: { name: 'Voorraad', desc: 'Horloges, inkoop en verkoop', color: '#8a6a35', pages: [['stock', 'Voorraad'], ['sales', 'Verkopen']], quick: [['purchase', '＋ Inkoop', 'primary'], ['sale', '＋ Verkoop']] },
+  financien: { name: 'Financiën', desc: 'Resultaat, uitgaven, bank en vennoten', color: '#2f6b4f', pages: [['dashboard', 'Overzicht'], ['expenses', 'Uitgaven'], ['bank', 'Bank'], ['reports', 'Rapportages'], ['partners', 'Vennoten']], quick: [['expense', '＋ Uitgave', 'primary'], ['bank-entry', '＋ Bankmutatie']] },
+  marketing: { name: 'Marketing', desc: 'Contentkalender en posts', color: '#9a4a3a', pages: [['mk-overview', 'Overzicht'], ['calendar', 'Kalender'], ['posts', 'Alle posts']], quick: [['post', '＋ Post', 'primary']] },
+  ideeen: { name: 'Ideeën', desc: 'Ideeënbord en wishlist', color: '#a2802a', pages: [['ideas', 'Ideeënbord'], ['wishlist', 'Wishlist']], quick: [['idea', '＋ Idee', 'primary'], ['wish', '＋ Wens']] },
+  taken: { name: 'Taken', desc: 'Wie doet wat, en wanneer', color: '#3c5f8a', pages: [['tasks', 'Takenbord']], quick: [['task', '＋ Taak', 'primary']] },
+  branding: { name: 'Branding', desc: "Kleuren, logo's en vaste teksten", color: '#6b4f8a', pages: [['brand', 'Merkkit']], quick: [] },
+  instellingen: { name: 'Instellingen', desc: 'Btw, winstverdeling en account', color: '#5f5a50', pages: [['settings', 'Instellingen']], quick: [] },
+};
+const moduleOf = p => Object.keys(MODULES).find(m => MODULES[m].pages.some(([k]) => k === p));
+
+const meHtml = () => `<div class="me" data-go="instellingen" title="Instellingen"><span class="avatar">${esc(store.user.name[0])}</span><div><b>${esc(store.user.name)}</b><small>${store.mode === 'demo' ? 'Demomodus' : 'Verbonden'}</small></div></div>`;
+function sidebarHtml() {
+  const m = MODULES[route.mod];
+  return `<a class="wordmark small" data-go="home">LUMAR<span>Watches</span></a>
+    <a class="apps-btn" data-go="home">${icon('apps')}<span>Alle apps</span></a>
+    <div class="mod-title"><span class="mod-ico" style="--c:${m.color}">${icon(route.mod)}</span>${m.name}</div>
+    <nav id="nav">${m.pages.map(([k, l]) => `<a data-go="${route.mod}/${k}" class="${k === route.page ? 'on' : ''}">${l}</a>`).join('')}</nav>
+    <div class="sidebar-foot">${m.quick.length ? `<div class="quick">${m.quick.map(([a, l, c]) => `<button class="btn wide ${c || ''}" data-action="${a}">${l}</button>`).join('')}</div>` : ''}${meHtml()}</div>`;
+}
+
+// Gegevens van Taken, Ideeën, Marketing en Branding
+const items = mod => (S().items || []).filter(i => i.module === mod).map(i => ({ ...i.data, id: i.id, created_at: i.created_at, created_by_name: i.created_by_name }));
+const itemById = id => { const i = (S().items || []).find(x => x.id === id); return i ? { ...i.data, id: i.id, created_at: i.created_at, created_by_name: i.created_by_name } : null; };
+async function saveItem(module, id, data) {
+  if (store.itemsMissing) throw new Error('Voer eerst update-modules.sql uit in Supabase (zie README).');
+  if (id) { const cur = S().items.find(x => x.id === id); return store.update('items', id, { data: { ...cur.data, ...data }, updated_at: new Date().toISOString() }); }
+  return store.insert('items', { module, data });
+}
+async function deleteItem(id, label) {
+  if (!await confirmDialog(`${label} verwijderen?`, 'Dit kan niet ongedaan worden gemaakt.')) return false;
+  await store.remove('items', id); toast('Verwijderd'); return true;
+}
+const itemsBanner = () => store.itemsMissing ? '<div class="banner">Dit onderdeel heeft een kleine database-update nodig: voer <b>update-modules.sql</b> één keer uit in Supabase → SQL Editor.</div>' : '';
+const watchOptions = () => [['', '—'], ...S().watches.filter(w => w.status !== 'written_off').map(w => [w.id, `${wname(w)}${w.reference ? ' · ' + w.reference : ''} · ${STATUS[w.status]}`])];
+const addDays = (d, k) => { const x = new Date(d + 'T12:00'); x.setDate(x.getDate() + k); return x.toISOString().slice(0, 10); };
+const avatar = name => `<span class="avatar xs" title="${esc(name)}">${esc((name || '?')[0])}</span>`;
+const longDate = () => { const t = new Date().toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); return t[0].toUpperCase() + t.slice(1); };
+
+// Taken
+const TASK_STATUS = [['todo', 'Te doen'], ['doing', 'Bezig'], ['done', 'Klaar']];
+const AREAS = ['Algemeen', 'Inkoop', 'Verkoop', 'Financiën', 'Marketing', 'Branding'];
+const PRIO = [['low', 'Laag'], ['normal', 'Normaal'], ['high', 'Hoog']];
+const prioRank = t => ({ high: 2, normal: 1, low: 0 })[t.priority] ?? 1;
+function dueChip(t) {
+  if (!t.due) return '';
+  const late = t.status !== 'done' && t.due < today();
+  const label = t.due === today() ? 'Vandaag' : t.due === addDays(today(), 1) ? 'Morgen' : fdate(t.due);
+  return `<span class="chip ${late ? 'late' : t.due === today() ? 'warn' : ''}">${late ? 'Te laat · ' : ''}${label}</span>`;
+}
+function taskForm(id, preset = {}) {
+  const t = id ? itemById(id) : { status: 'todo', owner: store.user.name, priority: 'normal', area: 'Algemeen', ...preset };
+  openForm({
+    eyebrow: id ? 'Taak' : 'Nieuwe taak', title: id ? t.title : 'Taak toevoegen',
+    fields: [
+      { name: 'title', label: 'Taak', required: true, wide: true, value: t.title },
+      { name: 'owner', label: 'Wie', type: 'select', options: [...partners(), 'Samen'], value: t.owner },
+      { name: 'due', label: 'Deadline', type: 'date', value: t.due },
+      { name: 'status', label: 'Status', type: 'select', options: TASK_STATUS, value: t.status },
+      { name: 'priority', label: 'Prioriteit', type: 'select', options: PRIO, value: t.priority },
+      { name: 'area', label: 'Onderdeel', type: 'select', options: AREAS, value: t.area },
+      { name: 'watch_id', label: 'Horloge (optioneel)', type: 'select', options: watchOptions(), value: t.watch_id },
+      { name: 'notes', label: 'Toelichting', type: 'textarea', wide: true, value: t.notes },
+    ],
+    onSubmit: async d => { await saveItem('task', id, { ...d, done_at: d.status === 'done' ? (t.done_at || today()) : null }); toast('Taak opgeslagen'); },
+    onDelete: id ? () => deleteItem(id, 'Taak') : null,
+  });
+}
+async function moveTask(id, dir) {
+  const t = itemById(id), order = TASK_STATUS.map(x => x[0]);
+  const next = order[Math.max(0, Math.min(2, order.indexOf(t.status) + dir))];
+  await saveItem('task', id, { status: next, done_at: next === 'done' ? today() : null });
+  if (next === 'done') toast('Taak afgerond ✓');
+  render();
+}
+
+// Ideeën en wishlist
+const IDEA_STATUS = [['new', 'Nieuw'], ['working', 'Uitwerken'], ['done', 'Gedaan'], ['rejected', 'Afgewezen']];
+const IDEA_CATS = ['Product', 'Marketing', 'Branding', 'Proces', 'Overig'];
+const WISH_STATUS = [['searching', 'Zoeken'], ['bought', 'Gekocht'], ['dropped', 'Vervallen']];
+function ideaForm(id) {
+  const i = id ? itemById(id) : { status: 'new', category: 'Product' };
+  openForm({
+    eyebrow: id ? 'Idee' : 'Nieuw idee', title: id ? i.title : 'Idee toevoegen',
+    fields: [
+      { name: 'title', label: 'Idee', required: true, wide: true, value: i.title },
+      { name: 'category', label: 'Categorie', type: 'select', options: IDEA_CATS, value: i.category },
+      { name: 'status', label: 'Status', type: 'select', options: IDEA_STATUS, value: i.status },
+      { name: 'description', label: 'Uitwerking', type: 'textarea', wide: true, value: i.description },
+    ],
+    onSubmit: async d => { await saveItem('idea', id, d); toast('Idee opgeslagen'); },
+    onDelete: id ? () => deleteItem(id, 'Idee') : null,
+  });
+}
+function wishForm(id) {
+  const w = id ? itemById(id) : { status: 'searching', priority: 'normal' };
+  openForm({
+    eyebrow: id ? 'Wishlist' : 'Nieuwe wens', title: id ? `${w.brand} ${w.model}` : 'Horloge op de wishlist',
+    fields: [
+      { name: 'brand', label: 'Merk', required: true, value: w.brand, list: [...new Set(S().watches.map(x => x.brand))] },
+      { name: 'model', label: 'Model', required: true, value: w.model },
+      { name: 'reference', label: 'Referentie', value: w.reference },
+      { name: 'priority', label: 'Prioriteit', type: 'select', options: PRIO, value: w.priority },
+      { name: 'max_price', label: 'Max. inkoopprijs (€)', type: 'money', value: w.max_price },
+      { name: 'expected_sale', label: 'Verwachte verkoopprijs (€)', type: 'money', value: w.expected_sale },
+      { name: 'link', label: 'Link (advertentie of voorbeeld)', type: 'url', wide: true, value: w.link, placeholder: 'https://' },
+      { name: 'status', label: 'Status', type: 'select', options: WISH_STATUS, value: w.status },
+      { name: 'notes', label: 'Notities', type: 'textarea', wide: true, value: w.notes },
+    ],
+    onSubmit: async d => { await saveItem('wish', id, { ...d, max_price: n(d.max_price), expected_sale: n(d.expected_sale) }); toast('Wishlist bijgewerkt'); },
+    onDelete: id ? () => deleteItem(id, 'Wens') : null,
+  });
+}
+
+// Marketing
+const POST_STATUS = [['idea', 'Idee'], ['prep', 'In voorbereiding'], ['planned', 'Ingepland'], ['posted', 'Gepost']];
+const CHANNELS = ['Instagram', 'TikTok', 'Facebook', 'Vinted', 'Marktplaats', 'Chrono24', 'Website', 'Overig'];
+const postLabel = s => (POST_STATUS.find(x => x[0] === s) || [s, s])[1];
+function postForm(id, preset = {}) {
+  const p = id ? itemById(id) : { status: 'idea', channel: 'Instagram', owner: store.user.name, ...preset };
+  openForm({
+    eyebrow: id ? 'Post' : 'Nieuwe post', title: id ? p.title : 'Post plannen',
+    fields: [
+      { name: 'title', label: 'Onderwerp', required: true, wide: true, value: p.title, placeholder: 'bv. Wrist shot Omega Seamaster' },
+      { name: 'channel', label: 'Kanaal', type: 'select', options: CHANNELS, value: p.channel },
+      { name: 'status', label: 'Status', type: 'select', options: POST_STATUS, value: p.status },
+      { name: 'date', label: 'Datum', type: 'date', value: p.date },
+      { name: 'time', label: 'Tijd', type: 'time', value: p.time },
+      { name: 'owner', label: 'Wie', type: 'select', options: [...partners(), 'Samen'], value: p.owner },
+      { name: 'watch_id', label: 'Horloge', type: 'select', options: watchOptions(), value: p.watch_id },
+      { name: 'caption', label: 'Tekst / caption', type: 'textarea', wide: true, value: p.caption },
+    ],
+    onSubmit: async d => { await saveItem('post', id, d); toast('Post opgeslagen'); },
+    onDelete: id ? () => deleteItem(id, 'Post') : null,
+  });
+}
+
+// Branding
+const BRAND_KINDS = { color: 'Kleur', font: 'Lettertype', asset: 'Bestand', text: 'Tekst' };
+function brandForm(kind, id) {
+  const b = id ? itemById(id) : { kind, hex: '#b08d4f' };
+  const fields = {
+    color: [{ name: 'name', label: 'Naam', required: true, value: b.name, placeholder: 'bv. LUMAR goud' }, { name: 'hex', label: 'Kleur', type: 'color', value: b.hex }, { name: 'usage', label: 'Gebruik', wide: true, value: b.usage, placeholder: 'bv. accenten, knoppen' }],
+    font: [{ name: 'name', label: 'Lettertype', required: true, value: b.name }, { name: 'usage', label: 'Gebruik', value: b.usage, placeholder: 'bv. koppen' }, { name: 'link', label: 'Link', type: 'url', wide: true, value: b.link }, { name: 'notes', label: 'Notities', type: 'textarea', wide: true, value: b.notes }],
+    asset: [{ name: 'name', label: 'Naam', required: true, value: b.name, placeholder: 'bv. Logo zwart' }, { name: 'file', label: id ? 'Nieuw bestand (optioneel)' : 'Bestand', type: 'file', accept: 'image/*,application/pdf' }, { name: 'notes', label: 'Notities', type: 'textarea', wide: true, value: b.notes }],
+    text: [{ name: 'name', label: 'Titel', required: true, value: b.name, placeholder: 'bv. Instagram-bio' }, { name: 'text', label: 'Tekst', type: 'textarea', wide: true, required: true, value: b.text }],
+  }[kind];
+  openForm({
+    eyebrow: 'Merkkit', title: id ? b.name : `${BRAND_KINDS[kind]} toevoegen`, fields,
+    onSubmit: async d => {
+      const data = { ...d, kind }; delete data.file;
+      if (kind === 'asset') {
+        if (!d.file && !id) { toast('Kies een bestand', 'bad'); return false; }
+        if (d.file) { data.path = await store.upload(d.file, 'brand'); data.mime = d.file.type; data.filename = d.file.name; }
+      }
+      await saveItem('brand', id, data); toast('Opgeslagen');
+    },
+    onDelete: id ? () => deleteItem(id, BRAND_KINDS[kind]) : null,
+  });
+}
+
+const tabsHtml = (key, opts) => `<div class="tabs">${opts.map(([v, l, c]) => `<button class="${ui[key] === v ? 'on' : ''}" data-action="set-ui" data-key="${key}" data-value="${v}">${l}${c !== undefined ? ` <small>${c}</small>` : ''}</button>`).join('')}</div>`;
+
+function launcher() {
+  const st = S(), y = periodRange('year'), c = calc(st, y), all = calc(st), me = store.user.name;
+  const tasks = items('task'), open = tasks.filter(t => t.status !== 'done');
+  const mine = open.filter(t => t.owner === me || t.owner === 'Samen').sort((a, b) => String(a.due || '9999').localeCompare(String(b.due || '9999')) || prioRank(b) - prioRank(a));
+  const late = open.filter(t => t.due && t.due < today()).length;
+  const week = addDays(today(), 7);
+  const upcoming = items('post').filter(p => p.status !== 'posted' && p.date && p.date >= today() && p.date <= week).sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
+  const ideas = items('idea').filter(i => ['new', 'working'].includes(i.status)), wishes = items('wish').filter(w => w.status === 'searching');
+  const brand = items('brand'), acts = actionItems(st);
+  const stat = {
+    voorraad: `${all.stockCount} actief · ${st.watches.filter(w => w.status === 'incoming').length} onderweg`,
+    financien: `Resultaat ${y.label}: ${euro(c.result)}`,
+    marketing: `${upcoming.length} ${upcoming.length === 1 ? 'post' : 'posts'} deze week`,
+    ideeen: `${ideas.length} ideeën · ${wishes.length} op wishlist`,
+    taken: `${open.length} open · ${mine.length} voor jou`,
+    branding: `${brand.filter(b => b.kind === 'color').length} kleuren · ${brand.filter(b => b.kind === 'asset').length} bestanden`,
+    instellingen: `Ingelogd als ${me}`,
+  };
+  const badge = { financien: acts.length, taken: late };
+  const h = new Date().getHours(), greet = h < 6 ? 'Goedenacht' : h < 12 ? 'Goedemorgen' : h < 18 ? 'Goedemiddag' : 'Goedenavond';
+  return `<div class="launch">
+    <header class="launch-head"><div class="wordmark small">LUMAR<span>Watches</span></div>${meHtml()}</header>
+    <div class="launch-hello"><h1>${greet}, ${esc(me)}</h1><p class="muted">${longDate()}</p></div>
+    ${itemsBanner()}
+    <div class="tiles">${Object.entries(MODULES).map(([k, m]) => `<a class="tile" data-go="${k}" style="--c:${m.color}">
+      <span class="tile-ico">${icon(k)}</span>${badge[k] ? `<span class="tile-badge ${k === 'taken' ? 'bad' : ''}">${badge[k]}</span>` : ''}
+      <h2>${m.name}</h2><p>${m.desc}</p><small>${stat[k]}</small></a>`).join('')}</div>
+    <section class="cols">
+      <div class="card"><div class="card-head"><h2>Jouw taken</h2><a data-go="taken">Takenbord ›</a></div>
+        ${mine.length ? `<ul class="list">${mine.slice(0, 6).map(t => `<li data-action="edit-task" data-id="${t.id}"><div><b>${esc(t.title)}</b><small>${esc(t.area || '')}${t.owner === 'Samen' ? ' · samen' : ''}</small></div>${dueChip(t)}</li>`).join('')}</ul>` : empty('Geen open taken voor jou.', '<button class="btn small" data-action="task">＋ Taak</button>')}</div>
+      <div class="card"><div class="card-head"><h2>Posts deze week</h2><a data-go="marketing/calendar">Kalender ›</a></div>
+        ${upcoming.length ? `<ul class="list">${upcoming.slice(0, 6).map(p => `<li data-action="edit-post" data-id="${p.id}"><div><b>${esc(p.title)}</b><small>${esc(p.channel)} · ${fdate(p.date)}${p.time ? ' ' + p.time : ''}</small></div><span class="chip ps-${p.status}">${postLabel(p.status)}</span></li>`).join('')}</ul>` : empty('Niets gepland deze week.', '<button class="btn small" data-action="post">＋ Post</button>')}</div>
+      <div class="card"><div class="card-head"><h2>Actie nodig</h2><a data-go="financien/bank">Bank ›</a></div>
+        ${acts.length ? `<ul class="list">${acts.slice(0, 6).map(a => `<li ${a.watchId ? `data-action="watch" data-id="${a.watchId}"` : a.kind === 'receipt' ? `data-action="receipt-expense" data-id="${a.expenseId}"` : 'data-go="financien/bank"'}><div><b>${esc(a.description)}</b><small>${a.reason}</small></div>${a.amount !== undefined ? `<span class="${a.direction === 'in' ? 'good' : 'bad'}">${a.direction === 'in' ? '+' : '−'}${euro(a.amount)}</span>` : '<span class="chev">›</span>'}</li>`).join('')}</ul>` : empty('Alles is bijgewerkt.')}</div>
+    </section></div>`;
+}
+
+Object.assign(pages, {
+  tasks() {
+    const me = store.user.name, f = ui.taskOwner;
+    let list = items('task');
+    if (f === 'me') list = list.filter(t => t.owner === me || t.owner === 'Samen');
+    else if (f !== 'all') list = list.filter(t => t.owner === f);
+    const col = s => list.filter(t => t.status === s).sort((a, b) => s === 'done' ? String(b.done_at).localeCompare(String(a.done_at)) : prioRank(b) - prioRank(a) || String(a.due || '9999').localeCompare(String(b.due || '9999')));
+    const card = t => `<article class="task prio-${t.priority || 'normal'}" data-action="edit-task" data-id="${t.id}">
+      <div class="task-top"><span class="chip">${esc(t.area || 'Algemeen')}</span>${dueChip(t)}</div>
+      <b>${esc(t.title)}</b>${t.notes ? `<p>${esc(t.notes)}</p>` : ''}
+      ${t.watch_id && watchById(t.watch_id) ? `<small class="muted">⌚ ${esc(wname(watchById(t.watch_id)))}</small>` : ''}
+      <div class="task-foot">${avatar(t.owner)}<small>${esc(t.owner || '')}</small><span class="move">${t.status !== 'todo' ? `<button class="x" data-action="task-move" data-id="${t.id}" data-dir="-1" title="Terug">‹</button>` : ''}${t.status !== 'done' ? `<button class="x" data-action="task-move" data-id="${t.id}" data-dir="1" title="Volgende stap">›</button>` : ''}</span></div></article>`;
+    return head('Takenbord', 'Klik op een taak om hem te bewerken, gebruik ‹ › om hem te verplaatsen.', '<button class="btn primary" data-action="task">＋ Taak</button>') + itemsBanner() + `
+      <div class="toolbar">${tabsHtml('taskOwner', [['all', 'Iedereen'], ['me', 'Mijn taken'], ...partners().map(p => [p, p]), ['Samen', 'Samen']])}</div>
+      <div class="board">${TASK_STATUS.map(([s, l]) => { const c = col(s); return `<section class="lane"><header><h2>${l}</h2><span class="badge">${c.length}</span></header>${c.slice(0, s === 'done' ? 15 : 200).map(card).join('') || '<p class="muted lane-empty">Leeg</p>'}${s === 'todo' ? '<button class="lane-add" data-action="task">＋ Taak toevoegen</button>' : ''}</section>`; }).join('')}</div>`;
+  },
+
+  ideas() {
+    const f = ui.ideaFilter, all = items('idea');
+    const sets = { open: ['new', 'working'], done: ['done'], rejected: ['rejected'], all: IDEA_STATUS.map(x => x[0]) };
+    const list = all.filter(i => sets[f].includes(i.status)).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    const cnt = k => all.filter(i => sets[k].includes(i.status)).length;
+    return head('Ideeënbord', 'Alles wat jullie te binnen schiet: producten, marketing, branding, processen.', '<button class="btn primary" data-action="idea">＋ Idee</button>') + itemsBanner() + `
+      <div class="toolbar">${tabsHtml('ideaFilter', [['open', 'Open', cnt('open')], ['done', 'Gedaan', cnt('done')], ['rejected', 'Afgewezen', cnt('rejected')], ['all', 'Alles', cnt('all')]])}</div>
+      ${list.length ? `<div class="note-grid">${list.map(i => `<article class="note" data-action="edit-idea" data-id="${i.id}">
+        <div class="task-top"><span class="chip">${esc(i.category)}</span><span class="chip is-${i.status}">${(IDEA_STATUS.find(x => x[0] === i.status) || [])[1] || ''}</span></div>
+        <h3>${esc(i.title)}</h3>${i.description ? `<p>${esc(i.description)}</p>` : ''}
+        <div class="task-foot">${avatar(i.created_by_name)}<small>${esc(i.created_by_name || '')} · ${fdate(String(i.created_at).slice(0, 10))}</small><span class="move"><button class="btn small" data-action="idea-task" data-id="${i.id}">→ Taak</button></span></div></article>`).join('')}</div>` : empty('Nog geen ideeën hier.', '<button class="btn primary" data-action="idea">＋ Eerste idee</button>')}`;
+  },
+
+  wishlist() {
+    const all = items('wish'), f = ui.wishFilter;
+    const list = all.filter(w => f === 'all' || w.status === f).sort((a, b) => prioRank(b) - prioRank(a) || String(b.created_at).localeCompare(String(a.created_at)));
+    return head('Wishlist', 'Horloges waar jullie op jagen, met de prijs waarvoor het interessant is.', '<button class="btn primary" data-action="wish">＋ Wens</button>') + itemsBanner() + `
+      <div class="toolbar">${tabsHtml('wishFilter', [['searching', 'Zoeken', all.filter(w => w.status === 'searching').length], ['bought', 'Gekocht', all.filter(w => w.status === 'bought').length], ['dropped', 'Vervallen'], ['all', 'Alles', all.length]])}</div>
+      ${list.length ? `<div class="card flush"><table class="table"><thead><tr><th>Horloge</th><th>Prioriteit</th><th class="r">Max. inkoop</th><th class="r">Verwacht verkoop</th><th class="r">Potentiële winst</th><th>Link</th><th></th></tr></thead><tbody>
+        ${list.map(w => { const pot = n(w.expected_sale) - n(w.max_price); return `<tr data-action="edit-wish" data-id="${w.id}"><td><b>${esc(w.brand)} ${esc(w.model)}</b>${w.reference ? `<small class="muted"> · ${esc(w.reference)}</small>` : ''}${w.notes ? `<br><small class="muted">${esc(w.notes)}</small>` : ''}</td>
+          <td><span class="chip pr-${w.priority}">${(PRIO.find(x => x[0] === w.priority) || [])[1] || ''}</span></td><td class="r">${w.max_price ? euro(w.max_price) : '—'}</td><td class="r">${w.expected_sale ? euro(w.expected_sale) : '—'}</td>
+          <td class="r">${w.max_price && w.expected_sale ? signed(pot) : '—'}</td><td>${w.link ? `<a href="${esc(w.link)}" target="_blank" rel="noopener" class="link" onclick="event.stopPropagation()">Openen ↗</a>` : ''}</td>
+          <td class="r">${w.status === 'searching' ? `<button class="btn small" data-action="wish-bought" data-id="${w.id}">Gekocht → inkoop</button>` : `<span class="chip">${(WISH_STATUS.find(x => x[0] === w.status) || [])[1]}</span>`}</td></tr>`; }).join('')}
+      </tbody></table></div>` : empty('De wishlist is leeg.', '<button class="btn primary" data-action="wish">＋ Wens toevoegen</button>')}`;
+  },
+
+  'mk-overview'() {
+    const st = S(), posts = items('post'), month = today().slice(0, 7);
+    const postedMonth = posts.filter(p => p.status === 'posted' && String(p.date).startsWith(month)).length;
+    const planned = posts.filter(p => p.status !== 'posted' && p.date && p.date >= today());
+    const spend = st.expenses.filter(e => e.category === 'Marketing' && String(e.date).startsWith(month)).reduce((a, e) => a + n(e.amount), 0);
+    const withPost = new Set(posts.map(p => p.watch_id).filter(Boolean));
+    const noPost = st.watches.filter(w => w.status === 'in_stock' && !withPost.has(w.id));
+    const next = [...planned].sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || ''))).slice(0, 8);
+    const ideasNoDate = posts.filter(p => p.status !== 'posted' && !p.date);
+    return head('Marketing', 'Wat er gepland staat en welke horloges nog aandacht nodig hebben.', '<button class="btn primary" data-action="post">＋ Post</button>') + itemsBanner() + `
+      <section class="stats">${stat('Gepost deze maand', postedMonth)}${stat('Gepland', planned.length, `${ideasNoDate.length} ideeën zonder datum`)}${stat('Marketingkosten deze maand', euro(spend), 'uit Financiën → Uitgaven', 'data-go="financien/expenses"')}${stat('Op voorraad zonder post', noPost.length, 'kansen voor content')}</section>
+      <section class="cols">
+        <div class="card"><div class="card-head"><h2>Komende posts</h2><a data-go="marketing/calendar">Kalender ›</a></div>
+          ${next.length ? `<ul class="list">${next.map(p => `<li data-action="edit-post" data-id="${p.id}"><div><b>${esc(p.title)}</b><small>${esc(p.channel)} · ${fdate(p.date)}${p.time ? ' ' + p.time : ''} · ${esc(p.owner || '')}</small></div><span class="chip ps-${p.status}">${postLabel(p.status)}</span></li>`).join('')}</ul>` : empty('Nog niets gepland.', '<button class="btn small" data-action="post">＋ Post plannen</button>')}</div>
+        <div class="card"><div class="card-head"><h2>Horloges zonder post</h2><a data-go="voorraad/stock">Voorraad ›</a></div>
+          ${noPost.length ? `<ul class="list">${noPost.slice(0, 8).map(w => `<li data-action="watch" data-id="${w.id}"><div class="photo sm" data-photo="${esc(w.photo_path || '')}"><span>${esc(w.brand[0])}</span></div><div><b>${esc(wname(w))}</b><small>${daysBetween(w.purchase_date || today(), today())} dagen op voorraad</small></div><button class="btn small" data-action="post" data-watch="${w.id}">＋ Post</button></li>`).join('')}</ul>` : empty('Elk horloge op voorraad heeft al een post.')}</div>
+      </section>`;
+  },
+
+  calendar() {
+    const ym = ui.calMonth || today().slice(0, 7), [y, m] = ym.split('-').map(Number);
+    const first = new Date(Date.UTC(y, m - 1, 1)), startDow = (first.getUTCDay() + 6) % 7;
+    const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const posts = items('post').filter(p => String(p.date).startsWith(ym));
+    const cells = [];
+    for (let i = 0; i < startDow; i++) cells.push('<div class="cal-cell out"></div>');
+    for (let d = 1; d <= days; d++) {
+      const date = `${ym}-${String(d).padStart(2, '0')}`;
+      const dp = posts.filter(p => p.date === date).sort((a, b) => String(a.time).localeCompare(String(b.time)));
+      cells.push(`<div class="cal-cell ${date === today() ? 'today' : ''}" data-action="cal-day" data-date="${date}"><span class="cal-day">${d}</span>${dp.map(p => `<button class="cal-post ps-${p.status}" data-action="edit-post" data-id="${p.id}" title="${esc(p.title)}">${p.time ? p.time + ' ' : ''}${esc(p.title)}</button>`).join('')}</div>`);
+    }
+    while (cells.length % 7) cells.push('<div class="cal-cell out"></div>');
+    const label = first.toLocaleDateString('nl-NL', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+    return head('Contentkalender', 'Klik op een dag om een post te plannen.', `<button class="btn" data-action="cal-move" data-dir="-1">‹</button><button class="btn" data-action="cal-move" data-dir="0">Vandaag</button><button class="btn" data-action="cal-move" data-dir="1">›</button>`) + itemsBanner() + `
+      <div class="card cal"><div class="card-head"><h2 class="cap">${label}</h2><div class="legend">${POST_STATUS.map(([k, l]) => `<span class="chip ps-${k}">${l}</span>`).join('')}</div></div>
+      <div class="cal-grid">${['ma', 'di', 'wo', 'do', 'vr', 'za', 'zo'].map(d => `<div class="cal-dow">${d}</div>`).join('')}${cells.join('')}</div></div>`;
+  },
+
+  posts() {
+    const all = items('post'), f = ui.postFilter;
+    const list = all.filter(p => f === 'all' || (f === 'open' ? p.status !== 'posted' : p.status === f)).sort((a, b) => String(b.date || '9999').localeCompare(String(a.date || '9999')));
+    return head('Alle posts', `${all.length} posts in totaal`, '<button class="btn primary" data-action="post">＋ Post</button>') + itemsBanner() + `
+      <div class="toolbar">${tabsHtml('postFilter', [['open', 'Nog te doen', all.filter(p => p.status !== 'posted').length], ['posted', 'Gepost', all.filter(p => p.status === 'posted').length], ['all', 'Alles', all.length]])}</div>
+      ${list.length ? `<div class="card flush"><table class="table"><thead><tr><th>Datum</th><th>Onderwerp</th><th>Kanaal</th><th>Horloge</th><th>Wie</th><th>Status</th></tr></thead><tbody>
+        ${list.map(p => `<tr data-action="edit-post" data-id="${p.id}"><td>${p.date ? fdate(p.date) : '<span class="muted">geen datum</span>'}${p.time ? ' ' + p.time : ''}</td><td><b>${esc(p.title)}</b></td><td>${esc(p.channel)}</td><td>${p.watch_id && watchById(p.watch_id) ? esc(wname(watchById(p.watch_id))) : ''}</td><td>${esc(p.owner || '')}</td><td><span class="chip ps-${p.status}">${postLabel(p.status)}</span></td></tr>`).join('')}
+      </tbody></table></div>` : empty('Geen posts in deze lijst.')}`;
+  },
+
+  brand() {
+    const b = items('brand'), of = k => b.filter(x => x.kind === k);
+    const section = (kind, title, body) => `<section class="card"><div class="card-head"><h2>${title}</h2><button class="btn small" data-action="brand-add" data-kind="${kind}">＋ ${BRAND_KINDS[kind]}</button></div>${body}</section>`;
+    return head('Merkkit', 'De huisstijl van LUMAR op één plek, zodat alles er hetzelfde uitziet.') + itemsBanner() +
+      section('color', 'Kleuren', of('color').length ? `<div class="swatches">${of('color').map(c => `<div class="swatch" data-action="edit-brand" data-id="${c.id}"><span style="background:${esc(c.hex)}"></span><b>${esc(c.name)}</b><small>${esc(c.hex)}${c.usage ? ' · ' + esc(c.usage) : ''}</small><button class="link" data-action="copy" data-id="${c.id}">Kopieer</button></div>`).join('')}</div>` : empty('Nog geen kleuren.')) +
+      section('font', 'Lettertypes', of('font').length ? `<ul class="list">${of('font').map(f => `<li data-action="edit-brand" data-id="${f.id}"><div><b style="font-family:'${esc(f.name)}', var(--serif);font-size:18px">${esc(f.name)}</b><small>${esc(f.usage || '')}${f.notes ? ' · ' + esc(f.notes) : ''}</small></div>${f.link ? `<a class="link" href="${esc(f.link)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Link ↗</a>` : ''}</li>`).join('')}</ul>` : empty('Nog geen lettertypes.')) +
+      section('asset', "Logo's en bestanden", of('asset').length ? `<div class="assets">${of('asset').map(a => `<div class="asset" data-action="edit-brand" data-id="${a.id}"><div class="photo contain" ${String(a.mime).startsWith('image/') ? `data-photo="${esc(a.path)}"` : ''}><span>${String(a.mime).includes('pdf') ? 'PDF' : '◇'}</span></div><b>${esc(a.name)}</b><button class="link" data-action="file" data-path="${esc(a.path)}">Openen ↗</button></div>`).join('')}</div>` : empty("Nog geen logo's of bestanden.")) +
+      section('text', 'Vaste teksten', of('text').length ? `<div class="texts">${of('text').map(t => `<div class="text-card" data-action="edit-brand" data-id="${t.id}"><div class="card-head"><b>${esc(t.name)}</b><button class="link" data-action="copy" data-id="${t.id}">Kopieer</button></div><p>${esc(t.text)}</p></div>`).join('')}</div>` : empty('Bijvoorbeeld je Instagram-bio of een standaard advertentietekst.'));
+  },
+});
+
 // ───────────── Klikken ─────────────
 document.addEventListener('click', async e => {
   const nav = e.target.closest('[data-page],[data-go]');
@@ -812,6 +1143,23 @@ document.addEventListener('click', async e => {
   try {
     switch (a.dataset.action) {
       case 'purchase': purchaseForm(); break;
+      case 'task': inDetail?.close(); taskForm(null, a.dataset.watch ? { watch_id: a.dataset.watch, area: 'Verkoop' } : {}); break;
+      case 'edit-task': inDetail?.close(); taskForm(id); break;
+      case 'task-move': await moveTask(id, +a.dataset.dir); break;
+      case 'idea': ideaForm(); break;
+      case 'edit-idea': ideaForm(id); break;
+      case 'idea-task': { const i = itemById(id); taskForm(null, { title: i.title, notes: i.description, area: AREAS.includes(i.category) ? i.category : 'Algemeen' }); break; }
+      case 'wish': wishForm(); break;
+      case 'edit-wish': wishForm(id); break;
+      case 'wish-bought': { const w = itemById(id); purchaseForm({ prefill: { brand: w.brand, model: w.model, reference: w.reference, purchase_price: w.max_price, estimated_value: w.expected_sale }, after: () => saveItem('wish', id, { status: 'bought' }) }); break; }
+      case 'post': inDetail?.close(); postForm(null, { watch_id: a.dataset.watch || '', date: a.dataset.date || today() }); break;
+      case 'edit-post': inDetail?.close(); postForm(id); break;
+      case 'cal-day': postForm(null, { date: a.dataset.date }); break;
+      case 'cal-move': { const [y, m] = (ui.calMonth || today().slice(0, 7)).split('-').map(Number); const d = a.dataset.dir === '0' ? new Date() : new Date(Date.UTC(y, m - 1 + +a.dataset.dir, 1)); ui.calMonth = a.dataset.dir === '0' ? today().slice(0, 7) : d.toISOString().slice(0, 7); render(); break; }
+      case 'brand-add': brandForm(a.dataset.kind); break;
+      case 'edit-brand': brandForm(itemById(id).kind, id); break;
+      case 'copy': { const i = itemById(id); await navigator.clipboard.writeText(i.kind === 'color' ? i.hex : i.text || ''); toast('Gekopieerd'); break; }
+      case 'set-ui': ui[a.dataset.key] = a.dataset.value; render(); break;
       case 'sale': inDetail?.close(); saleForm(id); break;
       case 'expense': expenseForm(); break;
       case 'watch': watchDetail(id); break;
@@ -855,8 +1203,7 @@ function showAuth(msg = '') {
 }
 function showApp() {
   $('#auth').hidden = true; $('#app').hidden = false;
-  $('#me').innerHTML = `<span class="avatar">${esc(store.user.name[0])}</span><div><b>${esc(store.user.name)}</b><small>${store.mode === 'demo' ? 'Demomodus' : 'Verbonden'}</small></div>`;
-  go(location.hash.slice(1) || 'dashboard');
+  go(location.hash.slice(1) || 'home');
 }
 
 $('#loginForm').addEventListener('submit', async e => {
@@ -869,7 +1216,7 @@ $('#loginForm').addEventListener('submit', async e => {
 });
 
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); window.__installPrompt = e; const b = $('#installBtn'); if (b) b.hidden = false; });
-window.addEventListener('hashchange', () => { const p = location.hash.slice(1); if (p && p !== page && pages[p]) go(p); });
+window.addEventListener('hashchange', () => { const h = location.hash.slice(1) || 'home'; if (store?.user && h !== routeHash()) go(h); });
 
 async function boot() {
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});

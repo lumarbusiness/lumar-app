@@ -10,7 +10,7 @@ export const DEFAULT_SETTINGS = {
   company_name: 'LUMAR Watches',
 };
 
-const emptyState = () => ({ watches: [], expenses: [], bank_entries: [], purchase_batches: [], settings: { ...DEFAULT_SETTINGS } });
+const emptyState = () => ({ watches: [], expenses: [], bank_entries: [], purchase_batches: [], items: [], settings: { ...DEFAULT_SETTINGS } });
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now().toString(36) + Math.random().toString(36).slice(2));
 
 export async function createStore(config, onRemoteChange = () => {}) {
@@ -24,6 +24,7 @@ function demoStore() {
   const read = () => { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch { return null; } };
   let state = read() || emptyState();
   state.settings = { ...DEFAULT_SETTINGS, ...(state.settings || {}) };
+  state.items = state.items || [];
   const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { console.warn(e); } };
   const files = () => { try { return JSON.parse(localStorage.getItem(FILES)) || {}; } catch { return {}; } };
   let signedIn = sessionStorage.getItem('lumar-demo-user');
@@ -90,7 +91,7 @@ async function cloudStore(config, onRemoteChange) {
   function subscribe() {
     if (channel) return;
     channel = sb.channel('lumar-sync');
-    for (const t of [...TABLES, 'settings'])
+    for (const t of [...TABLES, 'items', 'settings'])
       channel.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => {
         clearTimeout(timer); timer = setTimeout(async () => { await store.reload(); onRemoteChange(); }, 400);
       });
@@ -114,6 +115,10 @@ async function cloudStore(config, onRemoteChange) {
       const results = await Promise.all(TABLES.map(t => sb.from(t).select('*').order('created_at')));
       const st = emptyState();
       TABLES.forEach((t, i) => { st[t] = check(results[i]).map(normalize); });
+      // items (Taken, Ideeën, Marketing, Branding): werkt ook als de update-SQL nog niet is uitgevoerd
+      const it = await sb.from('items').select('*').order('created_at');
+      store.itemsMissing = !!it.error;
+      st.items = it.error ? [] : it.data.map(normalize);
       const settings = check(await sb.from('settings').select('*'));
       for (const s of settings) st.settings[s.key] = s.value;
       store.state = st;
