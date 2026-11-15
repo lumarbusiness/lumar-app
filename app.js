@@ -1121,8 +1121,8 @@ function launcher() {
     marketing: `${upcoming.length} ${upcoming.length === 1 ? 'post' : 'posts'} deze week`,
     ideeen: `${ideas.length} ideeën · ${wishes.length} op wishlist`,
     taken: `${open.length} open · ${mine.length} voor jou`,
-    branding: `${brand.filter(b => b.kind === 'color').length} kleuren · ${brand.filter(b => b.kind === 'asset').length} bestanden`,
-    documenten: `${items('doc').length} documenten · ${missingReceipts(st).length} bonnen ontbreken`,
+    branding: (c => `${brand.filter(b => b.kind === 'color').length} kleuren · ${c} ${c === 1 ? 'bestand' : 'bestanden'}`)(brand.filter(b => b.kind === 'asset').length),
+    documenten: `${items('doc').length} ${items('doc').length === 1 ? 'document' : 'documenten'} · ${missingReceipts(st).length} ${missingReceipts(st).length === 1 ? 'bon ontbreekt' : 'bonnen ontbreken'}`,
     instellingen: `Ingelogd als ${me}`,
   };
   const rc = reconcile(st);
@@ -1731,7 +1731,13 @@ window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); window
 window.addEventListener('hashchange', () => { const h = location.hash.slice(1) || 'home'; if (store?.user && h !== routeHash()) go(h); });
 
 async function boot() {
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(r => r.update()).catch(() => {});
+    // Nieuwe versie actief? Dan één keer automatisch herladen
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded && !document.querySelector('dialog[open] form')) { reloaded = true; location.reload(); } });
+  }
   try { store = await createStore(config, () => { if (!document.querySelector('dialog[open] form')) render(); }); }
   catch (err) { showAuth('Kan de database niet bereiken. Controleer je internetverbinding. (' + err.message + ')'); return; }
   if (store.mode === 'demo') {
