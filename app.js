@@ -882,6 +882,10 @@ function render() {
   main.innerHTML = home ? launcher() : pages[route.page]();
   main.scrollTop = scroll;
   loadPhotos(main);
+  const os = $('#odSearch');
+  if (os) os.onkeydown = async ev => { if (ev.key !== 'Enter') return; ui.odQuery = os.value.trim(); if (!ui.odQuery) { od.search = null; render(); return; } od.search = { children: [] }; render(); try { od.search = await store.invoke('lumar-integrations', { action: 'od-search', q: ui.odQuery }); } catch (e) { toast(e.message, 'bad'); od.search = null; } render(); };
+  const ou = $('#odUpload');
+  if (ou) ou.onchange = () => odUpload([...ou.files]).catch(e => toast(e.message, 'bad'));
   const ms = $('#mailSearch');
   if (ms) ms.oninput = () => { ui.mailSearch = ms.value; const pos = ms.selectionStart; render(); const m2 = $('#mailSearch'); m2.focus(); m2.setSelectionRange(pos, pos); };
   const search = $('#stockSearch');
@@ -937,7 +941,7 @@ const MODULES = {
   ideeen: { name: 'Ideeën', desc: 'Ideeënbord en wishlist', color: '#a2802a', pages: [['ideas', 'Ideeënbord'], ['wishlist', 'Wishlist']], quick: [['idea', '＋ Idee', 'primary'], ['wish', '＋ Wens']] },
   taken: { name: 'Taken', desc: 'Wie doet wat, en wanneer', color: '#3c5f8a', pages: [['tasks', 'Takenbord'], ['hours', 'Uren']], quick: [['task', '＋ Taak', 'primary'], ['hours-add', '＋ Uren']] },
   branding: { name: 'Branding', desc: "Kleuren, logo's en vaste teksten", color: '#6b4f8a', pages: [['brand', 'Merkkit']], quick: [] },
-  documenten: { name: 'Documenten', desc: 'Bonnen, contracten en certificaten', color: '#46696a', pages: [['receipts', 'Bonnen'], ['inbox', 'Mail'], ['docs', 'Documenten']], quick: [['doc', '＋ Document', 'primary']] },
+  documenten: { name: 'Documenten', desc: 'Bonnen, mail, documenten en OneDrive', color: '#46696a', pages: [['receipts', 'Bonnen'], ['inbox', 'Mail'], ['docs', 'Documenten'], ['onedrive', 'OneDrive']], quick: [['doc', '＋ Document', 'primary']] },
   instellingen: { name: 'Instellingen', desc: 'Btw, winstverdeling en account', color: '#5f5a50', pages: [['settings', 'Instellingen']], quick: [] },
 };
 const moduleOf = p => Object.keys(MODULES).find(m => MODULES[m].pages.some(([k]) => k === p));
@@ -1371,7 +1375,7 @@ function settingsIntegrations() {
   return `<section class="card"><div class="card-head"><h2>Koppelingen</h2></div>
     ${pending ? '<div class="banner">De koppelingen zijn klaar in de app, maar moeten nog één keer worden aangezet in Supabase (database-update en serverfuncties). Dat doen we samen.</div>' : ''}
     <div class="integ">
-      <div class="integ-row"><div><b>OneDrive</b><p class="muted">Bonnen, documenten en logo's automatisch naar <code>LUMAR/Bonnen/&lt;jaar&gt;/&lt;kwartaal&gt;/</code>, <code>LUMAR/Documenten/</code> en <code>LUMAR/Branding/</code>.</p>${status(od?.connected, od?.account)}</div>
+      <div class="integ-row"><div><b>OneDrive</b><p class="muted">Bekijk al je OneDrive-bestanden in Documenten → OneDrive. Bonnen, documenten en logo's gaan daarnaast automatisch naar <code>LUMAR/Bonnen/&lt;jaar&gt;/&lt;kwartaal&gt;/</code>, <code>LUMAR/Documenten/</code> en <code>LUMAR/Branding/</code>.</p>${status(od?.connected, od?.account)}</div>
         <div class="row-actions">${od?.connected ? '<button class="btn" data-action="onedrive-sync">Nu synchroniseren</button><button class="btn ghost danger-text" data-action="integ-disconnect" data-provider="onedrive">Ontkoppelen</button>' : `<button class="btn primary" data-action="onedrive-connect" ${pending ? 'disabled' : ''}>Koppel OneDrive</button>`}</div></div>
       <div class="integ-row"><div><b>Gmail</b><p class="muted">Mails komen binnen onder Documenten → Mail, waar je ze als bon koppelt.</p><label class="field inline"><span>Welke mails</span><select data-setting="gmail_scope">${options([['all', 'Alles uit de inbox (+ label LUMAR)'], ['nopromo', 'Inbox zonder Reclame en Sociaal'], ['receipts', 'Alleen bonnen, facturen en bestellingen']], S().settings.gmail_scope || 'all')}</select></label>${status(gm?.connected, gm?.connected ? 'info.lumarbusiness@gmail.com' : '')}</div>
         <div class="row-actions">${gm?.connected ? '<button class="btn" data-action="gmail-setup">Nieuwe koppelcode</button><button class="btn ghost danger-text" data-action="integ-disconnect" data-provider="gmail">Ontkoppelen</button>' : `<button class="btn primary" data-action="gmail-setup" ${pending ? 'disabled' : ''}>Koppel Gmail</button>`}</div></div>
@@ -1599,6 +1603,49 @@ Object.assign(pages, {
   },
 });
 
+// ───────────── OneDrive-verkenner ─────────────
+const od = { cache: {}, loading: null, error: null, search: null };
+const odCur = () => (ui.odStack ||= [{ id: '', name: 'OneDrive' }])[ui.odStack.length - 1];
+async function odLoad(id, force = false) {
+  if (!force && od.cache[id]) return;
+  od.loading = id; od.error = null;
+  try { od.cache[id] = await store.invoke('lumar-integrations', { action: 'od-list', itemId: id || undefined }); }
+  catch (e) { od.error = e.message; }
+  finally { od.loading = null; if (route.page === 'onedrive') render(); }
+}
+const fileIcon = f => f.folder ? '📁' : /pdf/i.test(f.mime || f.name) ? '📕' : /^image\//.test(f.mime || '') ? '🖼️' : /sheet|excel|\.xlsx?$|\.csv$/i.test(f.mime + f.name) ? '📊' : /word|\.docx?$/i.test(f.mime + f.name) ? '📝' : /video/.test(f.mime || '') ? '🎞️' : '📄';
+const fileSize = b => b == null ? '' : b < 1024 ? `${b} B` : b < 1048576 ? `${Math.round(b / 1024)} kB` : `${(b / 1048576).toFixed(1).replace('.', ',')} MB`;
+const toBase64 = file => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = rej; r.readAsDataURL(file); });
+
+async function odUpload(files) {
+  const cur = odCur();
+  for (const f of files) {
+    if (f.size > 15 * 1048576) { toast(`${f.name} is groter dan 15 MB`, 'bad'); continue; }
+    toast(`Uploaden: ${f.name}…`);
+    await store.invoke('lumar-integrations', { action: 'od-upload', parentId: cur.id || null, name: f.name, mime: f.type, base64: await toBase64(f) });
+  }
+  toast('Geüpload naar OneDrive'); await odLoad(cur.id, true);
+}
+
+Object.assign(pages, {
+  onedrive() {
+    const connected = integ?.onedrive?.connected;
+    if (!connected) return head('OneDrive', 'Bekijk en beheer jullie OneDrive-bestanden vanuit de app.') + `<div class="banner">OneDrive is nog niet gekoppeld. Dat doe je bij <a class="link" data-go="instellingen/settings">Instellingen → Koppelingen</a>.</div>`;
+    const cur = odCur();
+    const searching = od.search !== null;
+    const data = searching ? od.search : od.cache[cur.id];
+    if (!searching && !data && od.loading !== cur.id && !od.error) setTimeout(() => odLoad(cur.id), 0);
+    const items = (data?.children || []).slice().sort((a, b) => (b.folder - a.folder) || a.name.localeCompare(b.name, 'nl'));
+    return head('OneDrive', 'Jullie bestanden, rechtstreeks uit OneDrive.', `<button class="btn" data-action="od-refresh" title="Vernieuwen">↻</button><button class="btn" data-action="od-mkdir">＋ Map</button><label class="btn primary">⤒ Uploaden<input type="file" id="odUpload" multiple hidden></label>`) + `
+      <div class="toolbar"><input class="search" id="odSearch" placeholder="Zoek in OneDrive… (Enter)" value="${esc(ui.odQuery || '')}">
+        <div class="crumbs">${searching ? `<button class="link" data-action="od-clear">← Terug naar mappen</button> <span class="muted">Zoekresultaten voor "${esc(ui.odQuery)}"</span>` : ui.odStack.map((c, i) => `${i ? '<span class="muted">›</span>' : ''}<button class="link ${i === ui.odStack.length - 1 ? 'here' : ''}" data-action="od-crumb" data-i="${i}">${esc(c.name)}</button>`).join(' ')}</div></div>
+      ${od.error ? `<div class="banner">${esc(od.error)}</div>` : ''}
+      ${!data ? empty('Laden…') : items.length ? `<div class="card flush"><table class="table files"><thead><tr><th>Naam</th><th>Gewijzigd</th><th class="r">Grootte</th><th></th></tr></thead><tbody>
+        ${items.map(f => `<tr data-action="${f.folder ? 'od-open' : 'od-file'}" data-id="${esc(f.id)}" data-name="${esc(f.name)}"><td><span class="ficon">${fileIcon(f)}</span><b>${esc(f.name)}</b>${f.folder && f.childCount != null ? ` <small class="muted">${f.childCount} items</small>` : ''}${searching && f.path ? `<br><small class="muted">${esc(decodeURIComponent(String(f.path).replace(/^\/drive\/root:?/, '') || '/'))}</small>` : ''}</td><td>${f.modified ? new Date(f.modified).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}</td><td class="r">${f.folder ? '' : fileSize(f.size)}</td><td class="r">${f.folder ? '<span class="chev">›</span>' : `<button class="link" data-action="od-dl" data-id="${esc(f.id)}" title="Downloaden">⤓</button>`}</td></tr>`).join('')}
+      </tbody></table></div>` : empty(searching ? 'Niets gevonden.' : 'Deze map is leeg.')}`;
+  },
+});
+
 // ───────────── Klikken ─────────────
 document.addEventListener('click', async e => {
   const nav = e.target.closest('[data-page],[data-go]');
@@ -1617,6 +1664,12 @@ document.addEventListener('click', async e => {
       case 'vat-pay': { const v = vatReturn(S(), +a.dataset.y, +a.dataset.q); bankEntryForm({ type: 'vat_payment', amount: v.open, description: `Btw-afdracht K${v.q} ${v.year}`, reference_id: vatRef(v.year, v.q) }); break; }
       case 'mail-link': $('dialog.detail')?.close(); linkMailForm(id); break;
       case 'mail-open': await openMail(id); break;
+      case 'od-open': ui.odStack.push({ id, name: a.dataset.name }); render(); $('#main').scrollTop = 0; break;
+      case 'od-crumb': ui.odStack = ui.odStack.slice(0, +a.dataset.i + 1); render(); break;
+      case 'od-refresh': await odLoad(odCur().id, true); toast('Vernieuwd'); break;
+      case 'od-clear': od.search = null; ui.odQuery = ''; render(); break;
+      case 'od-file': case 'od-dl': { const win = window.open('', '_blank'); try { const r = await store.invoke('lumar-integrations', { action: 'od-download', itemId: id }); const u = a.dataset.action === 'od-dl' ? r.url : (r.webUrl || r.url); if (win && u) win.location = u; else win?.close(); } catch (err) { win?.close(); throw err; } break; }
+      case 'od-mkdir': openForm({ eyebrow: 'OneDrive', title: 'Nieuwe map', submit: 'Aanmaken', fields: [{ name: 'name', label: 'Naam van de map', required: true, wide: true }], onSubmit: async d => { await store.invoke('lumar-integrations', { action: 'od-mkdir', parentId: odCur().id || null, name: d.name }); await odLoad(odCur().id, true); toast('Map aangemaakt'); } }); break;
       case 'mail-expense': { $('dialog.detail')?.close(); const m = itemById(id); const f = mailFiles(m).find(x => x.mime !== 'text/plain') || mailFiles(m)[0]; expenseForm({ description: m.subject, amount: m.amounts?.[0], receipt_path: f?.path, after: () => saveItem('mail', id, { status: 'linked', linked_file: f?.path }) }); break; }
       case 'mail-ignore': $('dialog.detail')?.close(); await saveItem('mail', id, { status: 'ignored' }); render(); break;
       case 'mail-reset': await saveItem('mail', id, { status: 'new' }); render(); break;

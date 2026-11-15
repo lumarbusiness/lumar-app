@@ -384,3 +384,10 @@ textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, mono
 .sidebar .quick { grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 6px; }
 .sidebar .quick .btn { padding: 7px 8px; font-size: 13px; }
 .sidebar .wordmark.small { padding-bottom: 14px; }
+
+/* OneDrive-verkenner */
+.crumbs { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 14px; }
+.crumbs .link.here { color: var(--ink); font-weight: 600; }
+.table.files td { vertical-align: middle; }
+.ficon { display: inline-block; width: 26px; font-size: 17px; }
+label.btn { display: inline-flex; align-items: center; cursor: pointer; }

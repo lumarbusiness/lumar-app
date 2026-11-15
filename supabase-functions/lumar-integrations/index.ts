@@ -21,6 +21,45 @@ Deno.serve(async req => {
         return json({ url });
       }
       case 'onedrive-sync': return json(await syncOneDrive(db));
+      // ───── Verkenner ─────
+      case 'od-list': {
+        const token = await msToken(db);
+        const ref = body.itemId ? `items/${encodeURIComponent(body.itemId)}` : 'root';
+        const sel = 'id,name,size,folder,file,lastModifiedDateTime,webUrl,parentReference';
+        const [item, kids] = await Promise.all([
+          graph(token, `/me/drive/${ref}?$select=${sel}`),
+          graph(token, `/me/drive/${ref}/children?$select=${sel}&$top=500`),
+        ]);
+        return json({ item: slim(item), children: (kids.value || []).map(slim) });
+      }
+      case 'od-search': {
+        const token = await msToken(db);
+        const q = String(body.q || '').replace(/'/g, "''").slice(0, 100);
+        const res = await graph(token, `/me/drive/root/search(q='${encodeURIComponent(q)}')?$select=id,name,size,folder,file,lastModifiedDateTime,webUrl,parentReference&$top=100`);
+        return json({ children: (res.value || []).map(slim) });
+      }
+      case 'od-download': {
+        const token = await msToken(db);
+        const it = await graph(token, `/me/drive/items/${encodeURIComponent(body.itemId)}`);
+        return json({ url: it['@microsoft.graph.downloadUrl'] || null, webUrl: it.webUrl });
+      }
+      case 'od-mkdir': {
+        const token = await msToken(db);
+        const ref = body.parentId ? `items/${encodeURIComponent(body.parentId)}` : 'root';
+        const it = await graph(token, `/me/drive/${ref}/children`, { method: 'POST', body: JSON.stringify({ name: safeName(body.name), folder: {}, '@microsoft.graph.conflictBehavior': 'rename' }) });
+        return json({ item: slim(it) });
+      }
+      case 'od-upload': {
+        const token = await msToken(db);
+        const bytes = Uint8Array.from(atob(String(body.base64 || '')), c => c.charCodeAt(0));
+        const id = await uploadToOneDrive(token, safeName(body.name), bytes, body.mime || 'application/octet-stream', body.parentId || null);
+        return json({ id });
+      }
+      case 'od-delete': {
+        const token = await msToken(db);
+        await graph(token, `/me/drive/items/${encodeURIComponent(body.itemId)}`, { method: 'DELETE' });
+        return json({ ok: true });
+      }
       case 'gmail-secret': {
         const secret = randomToken(20);
         const { error } = await db.from('integrations').upsert({ provider: 'gmail', account: 'info.lumarbusiness@gmail.com', secret_hash: await sha256(secret), connected_by: user.id, updated_at: new Date().toISOString() });
@@ -42,6 +81,15 @@ Deno.serve(async req => {
 });
 
 // ───────── OneDrive ─────────
+async function graph(token: string, path: string, init: RequestInit = {}) {
+  const r = await fetch(`https://graph.microsoft.com/v1.0${path}`, { ...init, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(init.headers || {}) } });
+  if (r.status === 204) return {};
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new HttpError(r.status === 404 ? 404 : 400, j?.error?.message || `OneDrive-fout ${r.status}`);
+  return j;
+}
+const slim = (i: any) => ({ id: i.id, name: i.name, size: i.size, folder: !!i.folder, childCount: i.folder?.childCount, mime: i.file?.mimeType, modified: i.lastModifiedDateTime, webUrl: i.webUrl, parentId: i.parentReference?.id, path: i.parentReference?.path });
+
 async function msToken(db: ReturnType<typeof admin>) {
   const { data: row } = await db.from('integrations').select('*').eq('provider', 'onedrive').maybeSingle();
   if (!row?.refresh_token) throw new HttpError(400, 'OneDrive is niet gekoppeld');
@@ -82,13 +130,14 @@ async function wantedFiles(db: ReturnType<typeof admin>) {
   return out;
 }
 
-async function uploadToOneDrive(token: string, remote: string, bytes: Uint8Array, mime: string) {
+async function uploadToOneDrive(token: string, remote: string, bytes: Uint8Array, mime: string, parentId: string | null = null) {
   const enc = remote.split('/').map(encodeURIComponent).join('/');
+  const base = parentId ? `items/${encodeURIComponent(parentId)}:/${enc}` : `root:/${enc}`;
   if (bytes.length <= 4 * 1024 * 1024) {
-    const r = await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:/${enc}:/content?@microsoft.graph.conflictBehavior=replace`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': mime || 'application/octet-stream' }, body: bytes });
+    const r = await fetch(`https://graph.microsoft.com/v1.0/me/drive/${base}:/content?@microsoft.graph.conflictBehavior=replace`, { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': mime || 'application/octet-stream' }, body: bytes });
     const j = await r.json(); if (!r.ok) throw new Error(j?.error?.message || 'Upload mislukt'); return j.id as string;
   }
-  const s = await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:/${enc}:/createUploadSession`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ item: { '@microsoft.graph.conflictBehavior': 'replace' } }) });
+  const s = await fetch(`https://graph.microsoft.com/v1.0/me/drive/${base}:/createUploadSession`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ item: { '@microsoft.graph.conflictBehavior': 'replace' } }) });
   const sj = await s.json(); if (!s.ok) throw new Error(sj?.error?.message || 'Upload starten mislukt');
   const chunk = 327680 * 12; let last: any = null;
   for (let start = 0; start < bytes.length; start += chunk) {
