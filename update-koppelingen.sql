@@ -48,3 +48,10 @@ grant execute on function public.integration_status() to authenticated;
 
 update storage.buckets set allowed_mime_types = array['image/jpeg','image/png','image/webp','image/svg+xml','application/pdf','text/plain',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'] where id = 'lumar-files';
+
+-- Serverfuncties (Edge Functions) werken met de service role
+grant select, insert, update, delete on table
+  public.integrations, public.oauth_states, public.sync_log, public.items,
+  public.watches, public.purchase_batches, public.expenses, public.bank_entries,
+  public.settings, public.members
+to service_role;

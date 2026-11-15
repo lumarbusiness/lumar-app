@@ -855,8 +855,8 @@ const pages = {
         <p class="muted">Per verkocht horloge: (verkoopprijs − inkoopprijs) × ${s.vat_rate}/${100 + n(s.vat_rate)}. Zet dit uit als jullie onder de kleineondernemersregeling (KOR) vallen. Laat dit altijd controleren door een boekhouder.</p>
       </section>
       <section class="card"><div class="card-head"><h2>Winstverdeling</h2></div>
-        <div class="grid">${partners().map(p => `<label class="field"><span>${esc(p)} (%)</span><input type="number" min="0" max="100" data-share="${esc(p)}" value="${n(s.profit_shares?.[p] ?? 100 / partners().length)}"></label>`).join('')}</div>
-        <button class="btn" data-action="save-shares">Verdeling opslaan</button>
+        <div class="grid">${partners().map(p => `<label class="field"><span>${esc(p)} (%)</span><input type="number" min="0" max="100" step="1" data-share="${esc(p)}" value="${n(s.profit_shares?.[p] ?? 100 / partners().length)}"></label>`).join('')}</div>
+        <p class="muted small-note">Samen altijd 100%: verander je het ene percentage, dan past het andere zich vanzelf aan. Wordt automatisch opgeslagen.</p>
       </section>
       ${settingsTax()}
       ${settingsIntegrations()}
@@ -1620,9 +1620,25 @@ document.addEventListener('click', async e => {
   } catch (err) { console.error(err); toast(err.message || 'Er ging iets mis', 'bad'); }
 });
 
+document.addEventListener('input', e => {
+  const sh = e.target.closest('[data-share]');
+  if (!sh || sh.value === '') return;
+  const inputs = [...document.querySelectorAll('[data-share]')];
+  if (inputs.length === 2) { const o = inputs.find(i => i !== sh); o.value = round2(100 - Math.max(0, Math.min(100, n(sh.value)))); }
+});
 document.addEventListener('change', async e => {
   const p = e.target.closest('select.period');
   if (p) { ui[p.dataset.uikey] = p.value; render(); return; }
+  const sh = e.target.closest('[data-share]');
+  if (sh) {
+    const inputs = [...document.querySelectorAll('[data-share]')];
+    const v = Math.max(0, Math.min(100, round2(sh.value))); sh.value = v;
+    const others = inputs.filter(i => i !== sh);
+    const restOld = others.reduce((a, i) => a + n(i.value), 0), rest = round2(100 - v);
+    others.forEach((i, k) => { i.value = k === others.length - 1 ? round2(rest - others.slice(0, -1).reduce((a, o) => a + n(o.value), 0)) : round2(restOld ? n(i.value) / restOld * rest : rest / others.length); });
+    const shares = Object.fromEntries(inputs.map(i => [i.dataset.share, n(i.value)]));
+    await store.setSetting('profit_shares', shares); toast('Winstverdeling opgeslagen'); return;
+  }
   const sn = e.target.closest('[data-setting-num]');
   if (sn) { await store.setSetting(sn.dataset.settingNum, n(sn.value)); toast('Opgeslagen'); render(); return; }
   const st = e.target.closest('[data-starter]');
