@@ -876,8 +876,7 @@ const pages = {
 function render() {
   if (!store?.user) return;
   const home = route.mod === 'home';
-  $('#app').classList.toggle('home', home);
-  $('#sidebar').innerHTML = home ? '' : sidebarHtml();
+  $('#sidebar').innerHTML = sidebarHtml();
   const main = $('#main');
   const scroll = main.scrollTop;
   main.innerHTML = home ? launcher() : pages[route.page]();
@@ -933,7 +932,7 @@ const icon = (k, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill=
 
 const MODULES = {
   voorraad: { name: 'Voorraad', desc: 'Horloges, inkoop en verkoop', color: '#8a6a35', pages: [['stock', 'Voorraad'], ['sales', 'Verkopen']], quick: [['purchase', '＋ Inkoop', 'primary'], ['sale', '＋ Verkoop']] },
-  financien: { name: 'Financiën', desc: 'Resultaat, uitgaven, bank en vennoten', color: '#2f6b4f', pages: [['dashboard', 'Overzicht'], ['expenses', 'Uitgaven'], ['bank', 'Bank'], ['reports', 'Rapportages'], ['partners', 'Vennoten'], ['vat', 'Btw-aangifte'], ['tax', 'Belastingen'], ['check', 'Controle']], quick: [['expense', '＋ Uitgave', 'primary'], ['bank-entry', '＋ Bankmutatie']] },
+  financien: { name: 'Financiën', desc: 'Resultaat, uitgaven, bank en vennoten', color: '#2f6b4f', pages: [['dashboard', 'Overzicht'], ['expenses', 'Uitgaven'], ['bank', 'Bank'], ['reports', 'Rapportages'], ['partners', 'Vennoten'], ['vat', 'Btw-aangifte'], ['tax', 'Belastingen'], ['check', 'Controle']], quick: [['expense', '＋ Uitgave', 'primary'], ['bank-entry', '＋ Mutatie']] },
   marketing: { name: 'Marketing', desc: 'Contentkalender en posts', color: '#9a4a3a', pages: [['mk-overview', 'Overzicht'], ['calendar', 'Kalender'], ['posts', 'Alle posts'], ['mk-stats', 'Statistieken']], quick: [['post', '＋ Post', 'primary']] },
   ideeen: { name: 'Ideeën', desc: 'Ideeënbord en wishlist', color: '#a2802a', pages: [['ideas', 'Ideeënbord'], ['wishlist', 'Wishlist']], quick: [['idea', '＋ Idee', 'primary'], ['wish', '＋ Wens']] },
   taken: { name: 'Taken', desc: 'Wie doet wat, en wanneer', color: '#3c5f8a', pages: [['tasks', 'Takenbord'], ['hours', 'Uren']], quick: [['task', '＋ Taak', 'primary'], ['hours-add', '＋ Uren']] },
@@ -945,12 +944,18 @@ const moduleOf = p => Object.keys(MODULES).find(m => MODULES[m].pages.some(([k])
 
 const meHtml = () => `<div class="me" data-go="instellingen" title="Instellingen"><span class="avatar">${esc(store.user.name[0])}</span><div><b>${esc(store.user.name)}</b><small>${store.mode === 'demo' ? 'Demomodus' : 'Verbonden'}</small></div></div>`;
 function sidebarHtml() {
-  const m = MODULES[route.mod];
+  const home = route.mod === 'home', m = MODULES[route.mod];
+  const quick = home ? [] : m.quick;
   return `<a class="wordmark small" data-go="home">LUMAR<span>Watches</span></a>
-    <a class="apps-btn" data-go="home">${icon('apps')}<span>Alle apps</span></a>
-    <div class="mod-title"><span class="mod-ico" style="--c:${m.color}">${icon(route.mod)}</span>${m.name}</div>
-    <nav id="nav">${m.pages.map(([k, l]) => `<a data-go="${route.mod}/${k}" class="${k === route.page ? 'on' : ''}">${l}</a>`).join('')}</nav>
-    <div class="sidebar-foot">${m.quick.length ? `<div class="quick">${m.quick.map(([a, l, c]) => `<button class="btn wide ${c || ''}" data-action="${a}">${l}</button>`).join('')}</div>` : ''}${meHtml()}</div>`;
+    <nav id="nav">
+      <a data-go="home" class="app ${home ? 'on' : ''}"><span class="app-ico">${icon('apps')}</span><span>Start</span></a>
+      ${Object.entries(MODULES).map(([k, mod]) => {
+        const open = route.mod === k;
+        return `<a data-go="${k}" class="app ${open ? 'open' : ''}" style="--c:${mod.color}"><span class="app-ico">${icon(k)}</span><span>${mod.name}</span></a>
+        ${open ? `<div class="sub">${mod.pages.map(([pk, l]) => `<a data-go="${k}/${pk}" class="${pk === route.page ? 'on' : ''}">${l}</a>`).join('')}</div>` : ''}`;
+      }).join('')}
+    </nav>
+    <div class="sidebar-foot">${quick.length ? `<div class="quick">${quick.map(([a, l, c]) => `<button class="btn wide ${c || ''}" data-action="${a}">${l}</button>`).join('')}</div>` : ''}${meHtml()}</div>`;
 }
 
 // Gegevens van Taken, Ideeën, Marketing en Branding
@@ -1124,7 +1129,6 @@ function launcher() {
   const badge = { financien: rc.ok ? pendingPayments(st).length : '!', taken: late, documenten: missingReceipts(st).length };
   const h = new Date().getHours(), greet = h < 6 ? 'Goedenacht' : h < 12 ? 'Goedemorgen' : h < 18 ? 'Goedemiddag' : 'Goedenavond';
   return `<div class="launch">
-    <header class="launch-head"><div class="wordmark small">LUMAR<span>Watches</span></div>${meHtml()}</header>
     <div class="launch-hello"><h1>${greet}, ${esc(me)}</h1><p class="muted">${longDate()}</p></div>
     ${itemsBanner()}
     <div class="tiles">${Object.entries(MODULES).map(([k, m]) => `<a class="tile" data-go="${k}" style="--c:${m.color}">

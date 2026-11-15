@@ -354,3 +354,33 @@ textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, mono
 }
 .cols > *, .stats > *, .card { min-width: 0; }
 .card p, .card li, .card td { overflow-wrap: anywhere; }
+
+/* Zijbalk met alle apps */
+.sidebar { overflow: hidden; }
+.sidebar nav { display: flex; flex-direction: column; gap: 1px; overflow-y: auto; flex: 1; margin: 0 -4px; padding: 0 4px 10px; }
+.sidebar nav a.app { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 9px; color: #bdb5a4; font-weight: 500; }
+.sidebar nav a.app:hover { background: #22201a; color: #fff; }
+.sidebar nav a.app.on, .sidebar nav a.app.open { background: #2a2720; color: #fff; }
+.app-ico { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: none; color: #9a917d; background: #1f1d18; }
+.app-ico .ico { width: 17px; height: 17px; }
+.sidebar nav a.app.open .app-ico { background: color-mix(in srgb, var(--c) 35%, #1b1a15); color: #f1e6cf; }
+.sidebar nav a.app.on .app-ico { color: var(--gold-2); }
+.sidebar .sub { display: flex; flex-direction: column; gap: 1px; margin: 2px 0 6px 23px; padding-left: 14px; border-left: 1px solid #34312a; }
+.sidebar .sub a { padding: 6px 10px; border-radius: 7px; color: #a39b88; font-size: 13.5px; }
+.sidebar .sub a:hover { color: #fff; background: #22201a; }
+.sidebar .sub a.on { color: #fff; background: #2a2720; }
+.sidebar .sub a.on::before { content: ''; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--gold-2); margin: 0 8px 2px 0; }
+.sidebar-foot { margin-top: 8px; }
+.launch-hello { margin-bottom: 22px; }
+@media (max-width: 860px) {
+  .sidebar nav { flex-direction: row; margin: 0; padding: 0; overflow-x: auto; }
+  .sidebar nav a.app { flex-direction: column; gap: 2px; font-size: 10px; padding: 4px 8px; }
+  .sidebar .sub { flex-direction: row; margin: 0; padding: 0 0 0 4px; border-left: 1px solid #34312a; }
+  .sidebar .sub a { white-space: nowrap; align-self: center; }
+}
+.sidebar nav a.app { padding: 5px 10px; }
+.app-ico { width: 26px; height: 26px; }
+.sidebar .sub a { padding: 5px 10px; font-size: 13px; }
+.sidebar .quick { grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 6px; }
+.sidebar .quick .btn { padding: 7px 8px; font-size: 13px; }
+.sidebar .wordmark.small { padding-bottom: 14px; }
