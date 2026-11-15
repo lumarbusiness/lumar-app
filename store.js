@@ -70,8 +70,8 @@ async function cloudStore(config, onRemoteChange) {
   const sb = createClient(config.SUPABASE_URL, config.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
   const BUCKET = 'lumar-files';
   const urlCache = new Map();
-  let user = null, members = [], channel = null, timer = null;
-  const store = { mode: 'cloud', state: emptyState() };
+  let user = null, members = [], channel = null, timer = null, presence = null;
+  const store = { mode: 'cloud', state: emptyState(), online: new Set() };
 
   const check = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
   const memberName = id => members.find(m => m.user_id === id)?.display_name || '';
@@ -98,6 +98,13 @@ async function cloudStore(config, onRemoteChange) {
         clearTimeout(timer); timer = setTimeout(async () => { await store.reload(); onRemoteChange(); }, 400);
       });
     channel.subscribe();
+    // Wie is er nu online (Realtime Presence)
+    presence = sb.channel('lumar-presence', { config: { presence: { key: user.id } } });
+    presence.on('presence', { event: 'sync' }, () => {
+      store.online = new Set(Object.keys(presence.presenceState()));
+      store.onPresence?.();
+    });
+    presence.subscribe(st => { if (st === 'SUBSCRIBED') presence.track({ name: user.name, at: new Date().toISOString() }); });
   }
 
   Object.defineProperty(store, 'user', { get: () => user });
@@ -112,7 +119,7 @@ async function cloudStore(config, onRemoteChange) {
       const data = check(await sb.auth.signInWithPassword({ email, password }));
       await setUser(data.session); await store.reload(); subscribe();
     },
-    async signOut() { if (channel) { sb.removeChannel(channel); channel = null; } await sb.auth.signOut(); user = null; },
+    async signOut() { if (channel) { sb.removeChannel(channel); channel = null; } if (presence) { sb.removeChannel(presence); presence = null; } await sb.auth.signOut(); user = null; },
     async reload() {
       const results = await Promise.all(TABLES.map(t => sb.from(t).select('*').order('created_at')));
       const st = emptyState();

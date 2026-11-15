@@ -391,3 +391,18 @@ textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, mono
 .table.files td { vertical-align: middle; }
 .ficon { display: inline-block; width: 26px; font-size: 17px; }
 label.btn { display: inline-flex; align-items: center; cursor: pointer; }
+
+/* Team in Instellingen */
+.members { display: grid; gap: 4px; }
+.member { display: flex; align-items: center; gap: 12px; padding: 10px 4px; border-bottom: 1px solid var(--line); min-width: 0; }
+.member:last-child { border-bottom: 0; }
+.member .avatar { width: 40px; height: 40px; position: relative; flex: none; font-size: 16px; }
+.member .avatar .dot { position: absolute; right: -1px; bottom: -1px; width: 12px; height: 12px; border-radius: 50%; background: #b9b2a2; border: 2px solid var(--card); }
+.member .avatar .dot.on { background: #2e9d5b; }
+.member-main { flex: 1; min-width: 0; }
+.member-main .small, .member-meta .small { overflow-wrap: anywhere; }
+.member-meta { text-align: right; display: grid; gap: 4px; justify-items: end; }
+.online-txt { color: #2e9d5b; font-weight: 600; }
+.badge.plain { background: var(--line); color: var(--muted); }
+.small { font-size: 13px; }
+@media (max-width: 560px) { .member { flex-wrap: wrap; } .member-meta { text-align: left; justify-items: start; width: 100%; padding-left: 52px; } }

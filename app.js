@@ -850,7 +850,7 @@ const pages = {
 
   settings() {
     const s = S().settings;
-    return head('Instellingen') + `
+    return head('Instellingen') + settingsTeam() + `
       <section class="card"><div class="card-head"><h2>Btw</h2></div>
         <label class="check"><input type="checkbox" data-setting="vat_enabled" ${s.vat_enabled ? 'checked' : ''}> Btw berekenen volgens de margeregeling</label>
         <p class="muted">Per verkocht horloge: (verkoopprijs − inkoopprijs) × ${s.vat_rate}/${100 + n(s.vat_rate)}. Zet dit uit als jullie onder de kleineondernemersregeling (KOR) vallen. Laat dit altijd controleren door een boekhouder.</p>
@@ -1355,6 +1355,40 @@ function settingsTax() {
   </section>`;
 }
 
+let team = null; // leden met e-mail en laatste login
+async function loadTeam() {
+  if (store.mode !== 'cloud') { team = [{ user_id: 'demo', display_name: store.user?.name, email: '', last_sign_in_at: new Date().toISOString() }]; return; }
+  try { team = await store.rpc('team_overview'); } catch { team = null; }
+}
+const ago = iso => {
+  if (!iso) return 'nog nooit ingelogd';
+  const d = new Date(iso), min = Math.round((Date.now() - d) / 60000);
+  if (min < 2) return 'zojuist';
+  if (min < 60) return `${min} min geleden`;
+  if (min < 60 * 24 && d.toDateString() === new Date().toDateString()) return `vandaag ${d.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' })}`;
+  return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' }) + ' ' + d.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+};
+function settingsTeam() {
+  const s = S().settings, ps = partners();
+  const rows = team || [];
+  const isPartner = name => ps.includes(name);
+  const body = !team ? '<p class="muted">Team laden…</p>' : rows.map(m => {
+    const me = m.user_id === store.user?.id, online = me || store.online?.has(m.user_id);
+    const share = isPartner(m.display_name) ? n(s.profit_shares?.[m.display_name] ?? 100 / ps.length) : null;
+    return `<div class="member">
+      <span class="avatar">${esc((m.display_name || '?')[0].toUpperCase())}<i class="dot ${online ? 'on' : ''}"></i></span>
+      <div class="member-main"><b>${esc(m.display_name)}</b>${me ? ' <span class="badge">jij</span>' : ''}
+        <div class="muted small">${esc(m.email || '')}</div></div>
+      <div class="member-meta"><span class="badge ${share !== null ? '' : 'plain'}">${share !== null ? `Vennoot · ${share}%` : 'Lid'}</span>
+        <div class="muted small">${online ? '<span class="online-txt">● Nu online</span>' : 'Laatst ingelogd: ' + ago(m.last_sign_in_at)}</div></div>
+    </div>`;
+  }).join('');
+  return `<section class="card"><div class="card-head"><h2>Team</h2><span class="muted small">${rows.length} ${rows.length === 1 ? 'lid' : 'leden'}</span></div>
+    <div class="members">${body}</div>
+    <p class="muted small-note">Iemand toevoegen? Maak een gebruiker aan in Supabase (Authentication → Users) en voeg die toe aan de tabel <code>members</code>. Vraag het gerust aan Claude.</p>
+  </section>`;
+}
+
 let integ = null; // status van koppelingen
 async function loadIntegrations() {
   if (store.mode !== 'cloud') { integ = { unavailable: true }; return; }
@@ -1768,6 +1802,8 @@ function showApp() {
   if (qs.get('koppelfout')) { toast('Koppelen mislukt: ' + qs.get('koppelfout'), 'bad'); history.replaceState(null, '', location.pathname + location.hash); }
   go(location.hash.slice(1) || 'home');
   loadIntegrations().then(() => { if (['settings', 'inbox'].includes(route.page)) render(); });
+  loadTeam().then(() => { if (route.page === 'settings') render(); });
+  store.onPresence = () => { if (route.page === 'settings' && !$('#modalRoot').children.length && !document.activeElement?.matches('input,select,textarea')) render(); };
 }
 
 $('#loginForm').addEventListener('submit', async e => {
