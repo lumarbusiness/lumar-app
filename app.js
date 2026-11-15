@@ -938,7 +938,7 @@ const icon = (k, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill=
 const MODULES = {
   voorraad: { name: 'Voorraad', desc: 'Horloges, inkoop en verkoop', color: '#8a6a35', pages: [['stock', 'Voorraad'], ['sales', 'Verkopen']], quick: [['purchase', '＋ Inkoop', 'primary'], ['sale', '＋ Verkoop']] },
   financien: { name: 'Financiën', desc: 'Resultaat, uitgaven, bank en vennoten', color: '#2f6b4f', pages: [['dashboard', 'Overzicht'], ['expenses', 'Uitgaven'], ['bank', 'Bank'], ['reports', 'Rapportages'], ['partners', 'Vennoten'], ['vat', 'Btw-aangifte'], ['tax', 'Belastingen'], ['check', 'Controle']], quick: [['expense', '＋ Uitgave', 'primary'], ['bank-entry', '＋ Mutatie']] },
-  marketing: { name: 'Marketing', desc: 'Contentkalender en posts', color: '#9a4a3a', pages: [['mk-overview', 'Overzicht'], ['calendar', 'Kalender'], ['posts', 'Alle posts'], ['mk-stats', 'Statistieken']], quick: [['post', '＋ Post', 'primary']] },
+  marketing: { name: 'Marketing', desc: 'Contentkalender en posts', color: '#9a4a3a', pages: [['mk-overview', 'Overzicht'], ['calendar', 'Kalender'], ['posts', 'Alle posts'], ['tiktok', 'TikTok']], quick: [['post', '＋ Post', 'primary']] },
   ideeen: { name: 'Ideeën', desc: 'Ideeënbord en wishlist', color: '#a2802a', pages: [['ideas', 'Ideeënbord'], ['wishlist', 'Wishlist']], quick: [['idea', '＋ Idee', 'primary'], ['wish', '＋ Wens']] },
   taken: { name: 'Taken', desc: 'Wie doet wat, en wanneer', color: '#3c5f8a', pages: [['tasks', 'Takenbord'], ['hours', 'Uren']], quick: [['task', '＋ Taak', 'primary'], ['hours-add', '＋ Uren']] },
   branding: { name: 'Branding', desc: "Kleuren, logo's en vaste teksten", color: '#6b4f8a', pages: [['brand', 'Merkkit']], quick: [] },
@@ -1075,7 +1075,7 @@ function postForm(id, preset = {}) {
       { name: 'media', label: "Foto's / video", type: 'file', multiple: true, wide: true, accept: 'image/jpeg,image/png,image/webp,video/mp4,video/quicktime',
         hint: (p.media?.length ? `Nu ${p.media.length} ${p.media.length === 1 ? 'bestand' : 'bestanden'}. Kies nieuwe om ze te vervangen. ` : '') + "Tot 10 foto's (carrousel) of 1 video, max. 50 MB per bestand." },
       { name: 'publish_ig', label: 'Nu plaatsen op Instagram', type: 'checkbox', wide: true, show: d => d.channel === 'Instagram' && integ?.instagram?.connected && !p.ig_id },
-      { name: 'send_tt', label: 'Als concept naar TikTok sturen (daarna afmaken en plaatsen in de TikTok-app)', type: 'checkbox', wide: true, show: d => d.channel === 'TikTok' && integ?.tiktok?.connected },
+      { name: 'send_tt', label: 'Als concept naar TikTok sturen (daarna afmaken en plaatsen in de TikTok-app)', type: 'checkbox', wide: true, value: preset.send_tt, show: d => d.channel === 'TikTok' && integ?.tiktok?.connected },
       { type: 'html', name: 'linked', wide: true, html: p.ig_id || p.tt_id ? `<div class="banner">${p.ig_id ? 'Geplaatst op Instagram' : 'Gekoppeld aan TikTok'}${p.url ? ` · <a class="link" href="${esc(p.url)}" target="_blank" rel="noopener">bekijk post ↗</a>` : ''}. Cijfers worden automatisch bijgewerkt onder Statistieken.</div>` : '' },
       { type: 'section', label: 'Resultaat (na plaatsen)', name: 'stats-head', show: d => d.status === 'posted' },
       { name: 'url', label: 'Link naar de post', type: 'url', wide: true, value: p.url, placeholder: 'https://', show: d => d.status === 'posted' },
@@ -1242,7 +1242,7 @@ Object.assign(pages, {
           ${next.length ? `<ul class="list">${next.map(p => `<li data-action="edit-post" data-id="${p.id}"><div><b>${esc(p.title)}</b><small>${esc(p.channel)} · ${fdate(p.date)}${p.time ? ' ' + p.time : ''} · ${esc(p.owner || '')}</small></div><span class="chip ps-${p.status}">${postLabel(p.status)}</span></li>`).join('')}</ul>` : empty('Nog niets gepland.', '<button class="btn small" data-action="post">＋ Post plannen</button>')}</div>
         <div class="card"><div class="card-head"><h2>Horloges zonder post</h2><a data-go="voorraad/stock">Voorraad ›</a></div>
           ${noPost.length ? `<ul class="list">${noPost.slice(0, 8).map(w => `<li data-action="watch" data-id="${w.id}"><div class="photo sm" data-photo="${esc(w.photo_path || '')}"><span>${esc(w.brand[0])}</span></div><div><b>${esc(wname(w))}</b><small>${daysBetween(w.purchase_date || today(), today())} dagen op voorraad</small></div><button class="btn small" data-action="post" data-watch="${w.id}">＋ Post</button></li>`).join('')}</ul>` : empty('Elk horloge op voorraad heeft al een post.')}</div>
-      </section>`;
+      </section>${postResultsHtml()}`;
   },
 
   calendar() {
@@ -1426,6 +1426,9 @@ function settingsTeam() {
 }
 
 let integ = null; // status van koppelingen
+// Het Gmail-script meldt zich elke 15 minuten; na een uur stilte klopt er iets niet
+const gmailStale = () => !!integ?.gmail?.connected && Date.now() - new Date(integ.gmail.updated_at).getTime() > 60 * 60e3;
+const GMAIL_STALE_HTML = `<div class="banner warn">Het Gmail-script heeft al meer dan een uur niets van zich laten horen, dus nieuwe mails komen niet binnen. Open <b>script.google.com</b> → je LUMAR-project → links het <b>wekker-icoon (Triggers)</b>. Staat daar geen trigger voor <code>lumarSync</code>, kies dan bovenaan de functie <b>installeer</b> en klik op <b>Uitvoeren</b>. Kijk bij <b>Uitvoeringen</b> of er een foutmelding staat.</div>`;
 async function loadIntegrations() {
   if (store.mode !== 'cloud') { integ = { unavailable: true }; return; }
   try { const rows = await store.rpc('integration_status'); integ = Object.fromEntries((rows || []).map(r => [r.provider, r])); }
@@ -1447,12 +1450,12 @@ function settingsIntegrations() {
     <div class="integ">
       <div class="integ-row"><div><b>OneDrive</b><p class="muted">Bekijk al je OneDrive-bestanden in Documenten → OneDrive. Bonnen, documenten en logo's gaan daarnaast automatisch naar <code>LUMAR/Bonnen/&lt;jaar&gt;/&lt;kwartaal&gt;/</code>, <code>LUMAR/Documenten/</code> en <code>LUMAR/Branding/</code>.</p>${status(od?.connected, od?.account)}</div>
         <div class="row-actions">${od?.connected ? '<button class="btn" data-action="onedrive-sync">Nu synchroniseren</button><button class="btn ghost danger-text" data-action="integ-disconnect" data-provider="onedrive">Ontkoppelen</button>' : `<button class="btn primary" data-action="onedrive-connect" ${pending ? 'disabled' : ''}>Koppel OneDrive</button>`}</div></div>
-      <div class="integ-row"><div><b>Gmail</b><p class="muted">Mails komen binnen onder Documenten → Mail, waar je ze als bon koppelt.</p><label class="field inline"><span>Welke mails</span><select data-setting="gmail_scope">${options([['all', 'Alles uit de inbox (+ label LUMAR)'], ['nopromo', 'Inbox zonder Reclame en Sociaal'], ['receipts', 'Alleen bonnen, facturen en bestellingen']], S().settings.gmail_scope || 'all')}</select></label>${status(gm?.connected, gm?.connected ? 'info.lumarbusiness@gmail.com' : '')}</div>
+      <div class="integ-row"><div><b>Gmail</b><p class="muted">Mails komen binnen onder Documenten → Mail, waar je ze als bon koppelt.</p><label class="field inline"><span>Welke mails</span><select data-setting="gmail_scope">${options([['all', 'Alles uit de inbox (+ label LUMAR)'], ['nopromo', 'Inbox zonder Reclame en Sociaal'], ['receipts', 'Alleen bonnen, facturen en bestellingen']], S().settings.gmail_scope || 'all')}</select></label>${status(gm?.connected, gm?.connected ? `info.lumarbusiness@gmail.com · laatste contact ${ago(gm.updated_at)}` : '')}${gmailStale() ? GMAIL_STALE_HTML : ''}</div>
         <div class="row-actions">${gm?.connected ? '<button class="btn" data-action="gmail-setup">Nieuwe koppelcode</button><button class="btn ghost danger-text" data-action="integ-disconnect" data-provider="gmail">Ontkoppelen</button>' : `<button class="btn primary" data-action="gmail-setup" ${pending ? 'disabled' : ''}>Koppel Gmail</button>`}</div></div>
       ${['instagram', 'tiktok'].map(pv => { const x = integ?.[pv]; const nm = pv === 'instagram' ? 'Instagram' : 'TikTok';
         const txt = pv === 'instagram' ? 'Plaats posts (foto, carrousel of reel) rechtstreeks vanuit Marketing. Volgers, weergaven en likes komen vanzelf binnen onder Marketing → Statistieken.' : 'Stuur video\'s vanuit Marketing als concept naar TikTok; daar kies je geluid en plaats je hem. Volgers en weergaven komen vanzelf binnen onder Marketing → Statistieken.';
         return `<div class="integ-row"><div><b>${nm}</b><p class="muted">${txt}</p>${status(x?.connected, x?.account)}</div>
-        <div class="row-actions">${x?.connected ? `<button class="btn" data-go="marketing/mk-stats">Statistieken</button><button class="btn ghost danger-text" data-action="integ-disconnect" data-provider="${pv}">Ontkoppelen</button>` : `<button class="btn primary" data-action="social-connect" data-provider="${pv}" ${pending ? 'disabled' : ''}>Koppel ${nm}</button>`}</div></div>`; }).join('')}
+        <div class="row-actions">${x?.connected ? `<button class="btn" data-go="marketing/${pv === 'tiktok' ? 'tiktok' : 'mk-overview'}">Bekijken</button><button class="btn ghost danger-text" data-action="integ-disconnect" data-provider="${pv}">Ontkoppelen</button>` : `<button class="btn primary" data-action="social-connect" data-provider="${pv}" ${pending ? 'disabled' : ''}>Koppel ${nm}</button>`}</div></div>`; }).join('')}
     </div></section>`;
 }
 
@@ -1644,20 +1647,34 @@ Object.assign(pages, {
       ${list.length ? `<div class="card flush"><table class="table"><thead><tr><th>Datum</th><th>Wie</th><th>Soort werk</th><th>Omschrijving</th><th class="r">Uren</th></tr></thead><tbody>${list.slice(0, 300).map(h => `<tr data-action="edit-hours" data-id="${h.id}"><td>${fdate(h.date)}</td><td>${esc(h.person)}</td><td>${esc(h.activity)}</td><td>${esc(h.note || '')}</td><td class="r"><b>${String(h.hours).replace('.', ',')}</b></td></tr>`).join('')}</tbody></table></div>` : empty('Nog geen uren geschreven.', '<button class="btn primary" data-action="hours-add">＋ Eerste uren</button>')}`;
   },
 
-  'mk-stats'() {
-    if (!social.data && !social.loading && (integ?.instagram?.connected || integ?.tiktok?.connected)) loadSocial();
-    const posts = items('post').filter(p => p.status === 'posted');
-    const eng = p => n(p.likes) + n(p.comments) + n(p.saves);
-    const byCh = CHANNELS.map(c => { const l = posts.filter(p => p.channel === c); return { c, count: l.length, views: l.reduce((a, p) => a + n(p.views), 0), eng: l.reduce((a, p) => a + eng(p), 0) }; }).filter(x => x.count);
-    const top = [...posts].sort((a, b) => eng(b) - eng(a) || n(b.views) - n(a.views)).slice(0, 10);
-    const sold = new Set(S().watches.filter(w => w.status === 'sold').map(w => w.id));
-    const withWatch = posts.filter(p => p.watch_id), soldAfter = withWatch.filter(p => sold.has(p.watch_id)).length;
-    return head('Statistieken', 'Resultaten van geplaatste posts. Gekoppelde accounts worden automatisch bijgewerkt; andere kanalen vul je zelf in bij de post.', (integ?.instagram?.connected || integ?.tiktok?.connected) ? `<button class="btn" data-action="social-refresh" ${social.loading ? 'disabled' : ''}>${social.loading ? 'Bijwerken…' : '↻ Bijwerken'}</button>` : '') + itemsBanner() + socialHtml() + `
-      <section class="stats">${stat('Geplaatste posts', posts.length)}${stat('Weergaven', posts.reduce((a, p) => a + n(p.views), 0).toLocaleString('nl-NL'))}${stat('Interacties', posts.reduce((a, p) => a + eng(p), 0).toLocaleString('nl-NL'), 'likes + reacties + bewaard')}${stat('Horloge daarna verkocht', withWatch.length ? `${soldAfter} / ${withWatch.length}` : '—', 'posts met een gekoppeld horloge')}</section>
-      <section class="cols">
-        <div class="card"><div class="card-head"><h2>Per kanaal</h2></div>${byCh.length ? `<table class="table compact"><thead><tr><th>Kanaal</th><th class="r">Posts</th><th class="r">Weergaven</th><th class="r">Interacties</th><th class="r">Gem. per post</th></tr></thead><tbody>${byCh.map(x => `<tr><td>${x.c}</td><td class="r">${x.count}</td><td class="r">${x.views.toLocaleString('nl-NL')}</td><td class="r">${x.eng.toLocaleString('nl-NL')}</td><td class="r">${Math.round(x.eng / x.count)}</td></tr>`).join('')}</tbody></table>` : empty('Nog geen geplaatste posts.')}</div>
-        <div class="card"><div class="card-head"><h2>Beste posts</h2></div>${top.length ? `<ul class="list">${top.map(p => `<li data-action="edit-post" data-id="${p.id}"><div><b>${esc(p.title)}</b><small>${esc(p.channel)} · ${fdate(p.date)} · ${n(p.views).toLocaleString('nl-NL')} weergaven</small></div><span>${eng(p)} ♥</span></li>`).join('')}</ul>` : empty('Nog geen resultaten ingevuld.')}</div>
-      </section>`;
+  tiktok() {
+    const con = integ?.tiktok?.connected;
+    if (con && !social.data && !social.loading) loadSocial();
+    const btns = `${con ? `<button class="btn" data-action="social-refresh" ${social.loading ? 'disabled' : ''}>${social.loading ? 'Bijwerken…' : '↻ Bijwerken'}</button>` : ''}<button class="btn primary" data-action="tt-new">＋ Nieuwe TikTok</button>`;
+    const intro = 'Jullie TikTok-account: volgers, video\'s en wat er nog klaarstaat. De cijfers worden automatisch opgehaald.';
+    if (!integ) return head('TikTok', intro, btns) + '<div class="banner">Laden…</div>';
+    if (!con) return head('TikTok', intro, btns) + `<div class="banner">TikTok is nog niet gekoppeld. Dat doe je bij <a class="link" data-go="instellingen/settings">Instellingen → Koppelingen</a>.</div>`;
+    const tt = social.data?.tiktok, prof = tt?.profile, vids = tt?.videos || [];
+    const fmt = x => n(x).toLocaleString('nl-NL');
+    const snaps = items('socialstat').filter(x => x.tt_followers != null).sort((a, b) => a.date.localeCompare(b.date));
+    const base = snaps.find(x => x.date >= addDays(today(), -30)) || snaps[0];
+    const growth = prof?.follower_count != null && base && base.date < today() ? `${prof.follower_count - base.tt_followers >= 0 ? '+' : ''}${fmt(prof.follower_count - base.tt_followers)} sinds ${fdate(base.date)}` : 'groei zie je na een paar dagen';
+    const views = vids.reduce((a, v) => a + n(v.view_count), 0);
+    const waiting = items('post').filter(p => p.channel === 'TikTok' && p.status !== 'posted').sort((a, b) => String(a.date || '9').localeCompare(String(b.date || '9')));
+    const postOf = id => items('post').find(p => p.tt_id === id);
+    return head('TikTok', intro, btns) + itemsBanner() +
+      (tt?.error ? `<div class="banner">TikTok gaf een fout: ${esc(tt.error)}</div>` : '') +
+      (!tt && social.loading ? '<div class="banner">Cijfers van TikTok ophalen…</div>' : '') +
+      (prof ? `<section class="stats">${stat(`Volgers · ${esc(prof.display_name || '')}`, prof.follower_count != null ? fmt(prof.follower_count) : '—', growth)}${stat('Likes in totaal', prof.likes_count != null ? fmt(prof.likes_count) : '—', 'op al jullie video\'s')}${stat('Weergaven', fmt(views), `laatste ${vids.length} video's`)}${stat('Gem. per video', vids.length ? fmt(Math.round(views / vids.length)) : '—', 'weergaven')}</section>` : '') + `
+      <div class="card"><div class="card-head"><h2>Klaar om te plaatsen</h2><small class="muted">${waiting.length}</small></div>
+        ${waiting.length ? `<ul class="list">${waiting.map(p => `<li data-action="edit-post" data-id="${p.id}"><div><b>${esc(p.title)}</b><small>${p.date ? fdate(p.date) : 'geen datum'}${p.watch_id && watchById(p.watch_id) ? ' · ' + esc(wname(watchById(p.watch_id))) : ''}${p.tt_publish_id ? ' · staat in je TikTok-inbox' : ''}</small></div><span class="chip ps-${p.status}">${p.tt_publish_id ? 'Concept verstuurd' : postLabel(p.status)}</span></li>`).join('')}</ul>` : `<p class="muted">Niets klaargezet. Klik op <b>＋ Nieuwe TikTok</b>: kies je video, de app zet hem als concept in TikTok, en daar kies je geluid en plaats je hem.</p>`}
+      </div>
+      <div class="card flush"><div class="card-head pad"><h2>Video's op TikTok</h2><small class="muted">${social.at ? 'bijgewerkt ' + social.at.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' }) : ''}</small></div>
+        ${vids.length ? `<div class="tt-grid">${vids.map(v => { const p = postOf(v.id); return `<a class="tt-card" href="${esc(v.share_url || '#')}" target="_blank" rel="noopener">
+          <div class="tt-cover">${v.cover_image_url ? `<img src="${esc(v.cover_image_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}<span class="tt-views">▶ ${fmt(v.view_count)}</span></div>
+          <div class="tt-body"><b>${esc((v.title || v.video_description || 'Video').split('\n')[0])}</b><small class="muted">${fdate(new Date(v.create_time * 1000).toISOString().slice(0, 10))}${p?.watch_id && watchById(p.watch_id) ? ' · ⌚ ' + esc(wname(watchById(p.watch_id))) : ''}</small>
+          <small>♥ ${fmt(v.like_count)} · 💬 ${fmt(v.comment_count)} · ↗ ${fmt(v.share_count)}</small></div></a>`; }).join('')}</div>` : empty(social.loading ? 'Laden…' : 'Nog geen video\'s gevonden.')}
+      </div>`;
   },
 
   inbox() {
@@ -1667,6 +1684,7 @@ Object.assign(pages, {
     const cnt = s => all.filter(m => (m.status || 'new') === s).length;
     const ready = integ?.gmail?.connected;
     return head('Mail', 'Bonnen en bevestigingen uit Gmail. Koppel ze aan een inkoop of uitgave.') + itemsBanner() + `
+      ${gmailStale() ? GMAIL_STALE_HTML : ''}
       ${!ready ? `<div class="banner">Gmail is nog niet gekoppeld. Dat doe je bij <a class="link" data-go="instellingen/settings">Instellingen → Koppelingen</a>.</div>` : ''}
       <div class="toolbar"><input class="search" id="mailSearch" placeholder="Zoek op onderwerp, afzender of tekst…" value="${esc(ui.mailSearch || '')}">${tabsHtml('mailFilter', [['new', 'Nieuw', cnt('new')], ['linked', 'Gekoppeld', cnt('linked')], ['ignored', 'Genegeerd', cnt('ignored')], ['all', 'Alles', all.length]])}</div>
       ${list.length ? `<div class="card flush mail-list">${list.slice(0, 200).map(m => `<div class="mail-row ${(m.status || 'new') !== 'new' ? 'done' : ''}" data-action="mail-open" data-id="${m.id}">
@@ -1677,12 +1695,24 @@ Object.assign(pages, {
   },
 });
 
+function postResultsHtml() {
+  const posts = items('post').filter(p => p.status === 'posted');
+  if (!posts.length) return '';
+  const eng = p => n(p.likes) + n(p.comments) + n(p.saves);
+  const byCh = CHANNELS.map(c => { const l = posts.filter(p => p.channel === c); return { c, count: l.length, views: l.reduce((a, p) => a + n(p.views), 0), eng: l.reduce((a, p) => a + eng(p), 0) }; }).filter(x => x.count);
+  const top = [...posts].sort((a, b) => eng(b) - eng(a) || n(b.views) - n(a.views)).slice(0, 8);
+  return `<section class="cols">
+      <div class="card"><div class="card-head"><h2>Resultaat per kanaal</h2></div><table class="table compact"><thead><tr><th>Kanaal</th><th class="r">Posts</th><th class="r">Weergaven</th><th class="r">Interacties</th></tr></thead><tbody>${byCh.map(x => `<tr><td>${x.c}</td><td class="r">${x.count}</td><td class="r">${x.views.toLocaleString('nl-NL')}</td><td class="r">${x.eng.toLocaleString('nl-NL')}</td></tr>`).join('')}</tbody></table></div>
+      <div class="card"><div class="card-head"><h2>Beste posts</h2></div><ul class="list">${top.map(p => `<li data-action="edit-post" data-id="${p.id}"><div><b>${esc(p.title)}</b><small>${esc(p.channel)} · ${fdate(p.date)} · ${n(p.views).toLocaleString('nl-NL')} weergaven</small></div><span>${eng(p)} ♥</span></li>`).join('')}</ul></div>
+    </section>`;
+}
+
 // ───────────── Instagram & TikTok ─────────────
 const social = { data: null, loading: false, at: null };
 const igViews = m => n(m.views ?? m.reach);
 async function loadSocial(force = false) {
   if (social.loading || (!force && social.data)) return;
-  social.loading = true; if (route.page === 'mk-stats') render();
+  social.loading = true; if (route.page === 'tiktok') render();
   try {
     const d = await store.invoke('lumar-social', { action: 'stats' });
     social.data = d; social.at = new Date();
@@ -1690,7 +1720,7 @@ async function loadSocial(force = false) {
     if (d.instagram?.error && integ?.instagram?.connected) toast(d.instagram.error, 'bad');
     if (d.tiktok?.error && integ?.tiktok?.connected) toast(d.tiktok.error, 'bad');
   } catch (e) { toast(e.message, 'bad'); }
-  finally { social.loading = false; if (route.page === 'mk-stats') render(); }
+  finally { social.loading = false; if (route.page === 'tiktok') render(); }
 }
 // Werk cijfers van gekoppelde posts bij en bewaar één momentopname per dag (voor de groei)
 async function syncSocialPosts(d) {
@@ -1714,39 +1744,6 @@ async function syncSocialPosts(d) {
   const cur = items('socialstat').find(x => x.date === snap.date);
   if (!cur || cur.ig_followers !== snap.ig_followers || cur.tt_followers !== snap.tt_followers) await saveItem('socialstat', cur?.id, snap);
 }
-async function importSocial(provider, id) {
-  if (provider === 'instagram') {
-    const m = social.data?.instagram?.media?.find(x => x.id === id); if (!m) return;
-    await saveItem('post', null, { title: (m.caption || 'Instagram-post').split('\n')[0].slice(0, 80), channel: 'Instagram', status: 'posted', date: String(m.timestamp).slice(0, 10), owner: 'Samen', caption: m.caption || '', ig_id: m.id, url: m.permalink, views: igViews(m), likes: n(m.like_count), comments: n(m.comments_count), saves: n(m.saved) + n(m.shares) });
-  } else {
-    const v = social.data?.tiktok?.videos?.find(x => x.id === id); if (!v) return;
-    await saveItem('post', null, { title: (v.title || v.video_description || 'TikTok-video').split('\n')[0].slice(0, 80), channel: 'TikTok', status: 'posted', date: new Date(v.create_time * 1000).toISOString().slice(0, 10), owner: 'Samen', caption: v.video_description || '', tt_id: v.id, url: v.share_url, views: n(v.view_count), likes: n(v.like_count), comments: n(v.comment_count), saves: n(v.share_count) });
-  }
-  toast('Toegevoegd aan je posts'); render();
-}
-function socialHtml() {
-  const d = social.data; if (!d) return social.loading ? '<div class="banner">Cijfers van Instagram en TikTok ophalen…</div>' : '';
-  const snaps = items('socialstat').sort((a, b) => a.date.localeCompare(b.date));
-  const ago = (key, days) => { const t = new Date(Date.now() - days * 864e5).toISOString().slice(0, 10); const s = [...snaps].reverse().find(x => x.date <= t && x[key] != null); return s ? s[key] : null; };
-  const growth = (key, now) => { const old = ago(key, 30) ?? ago(key, 7); if (old == null || now == null) return 'groei verschijnt na een paar dagen'; const g = now - old; return `${g >= 0 ? '+' : ''}${g.toLocaleString('nl-NL')} sinds ${fdate(([...snaps].reverse().find(x => x[key] === old) || {}).date)}`; };
-  const known = new Set(items('post').flatMap(p => [p.ig_id, p.tt_id]).filter(Boolean));
-  const fmt = x => n(x).toLocaleString('nl-NL');
-  const ig = d.instagram, tt = d.tiktok, cards = [];
-  if (ig?.profile) cards.push(stat(`Instagram · @${esc(ig.profile.username)}`, fmt(ig.profile.followers_count) + ' volgers', growth('ig_followers', ig.profile.followers_count)));
-  if (tt?.profile) cards.push(stat(`TikTok · ${esc(tt.profile.display_name || '')}`, tt.profile.follower_count != null ? fmt(tt.profile.follower_count) + ' volgers' : `${(tt.videos || []).length} video's`, tt.profile.follower_count != null ? growth('tt_followers', tt.profile.follower_count) : ''));
-  if (ig?.media) cards.push(stat('Instagram-weergaven', fmt(ig.media.reduce((a, m) => a + igViews(m), 0)), `laatste ${ig.media.length} posts`));
-  if (tt?.videos) cards.push(stat('TikTok-weergaven', fmt(tt.videos.reduce((a, v) => a + n(v.view_count), 0)), `laatste ${tt.videos.length} video's`));
-  const rows = [
-    ...(ig?.media || []).map(m => ({ prov: 'instagram', id: m.id, ch: 'Instagram', date: String(m.timestamp).slice(0, 10), title: (m.caption || m.media_type || '').split('\n')[0], url: m.permalink, views: igViews(m), likes: n(m.like_count), comments: n(m.comments_count) })),
-    ...(tt?.videos || []).map(v => ({ prov: 'tiktok', id: v.id, ch: 'TikTok', date: new Date(v.create_time * 1000).toISOString().slice(0, 10), title: (v.title || v.video_description || '').split('\n')[0], url: v.share_url, views: n(v.view_count), likes: n(v.like_count), comments: n(v.comment_count) })),
-  ].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 30);
-  return `<section class="stats">${cards.join('')}</section>
-    ${rows.length ? `<div class="card flush"><div class="card-head pad"><h2>Recent geplaatst</h2><small class="muted">bijgewerkt ${social.at ? social.at.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' }) : ''}</small></div>
-      <table class="table compact"><thead><tr><th>Datum</th><th>Kanaal</th><th>Post</th><th class="r">Weergaven</th><th class="r">Likes</th><th class="r">Reacties</th><th></th></tr></thead><tbody>
-      ${rows.map(r => `<tr><td>${fdate(r.date)}</td><td>${r.ch}</td><td class="clip">${r.url ? `<a class="link" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title || 'bekijk')}</a>` : esc(r.title)}</td><td class="r">${fmt(r.views)}</td><td class="r">${fmt(r.likes)}</td><td class="r">${fmt(r.comments)}</td>
-        <td class="r">${known.has(r.id) ? '<span class="chip ps-posted">in LUMAR</span>' : `<button class="btn small" data-action="social-import" data-provider="${r.prov}" data-id="${esc(r.id)}">＋ Toevoegen</button>`}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
-}
-
 // ───────────── OneDrive-verkenner ─────────────
 const od = { cache: {}, loading: null, error: null, search: null };
 const odCur = () => (ui.odStack ||= [{ id: '', name: 'OneDrive' }])[ui.odStack.length - 1];
@@ -1822,7 +1819,7 @@ document.addEventListener('click', async e => {
       case 'onedrive-sync': { toast('Bezig met synchroniseren…'); let total = 0; for (let i = 0; i < 20; i++) { const r = await store.invoke('lumar-integrations', { action: 'onedrive-sync' }); total += r.uploaded || 0; if (!r.remaining) break; } toast(`OneDrive bijgewerkt: ${total} bestand(en)`); break; }
       case 'social-connect': { const r = await store.invoke('lumar-social', { action: 'connect', provider: a.dataset.provider }); location.href = r.url; break; }
       case 'social-refresh': await loadSocial(true); break;
-      case 'social-import': await importSocial(a.dataset.provider, a.dataset.id); break;
+      case 'tt-new': postForm(null, { channel: 'TikTok', status: 'prep', date: today(), send_tt: !!integ?.tiktok?.connected }); break;
       case 'integ-disconnect': if (await confirmDialog('Koppeling verbreken?', 'De app stopt met deze koppeling. Bestaande bestanden blijven staan.', 'Ontkoppelen')) { await store.invoke(['instagram', 'tiktok'].includes(a.dataset.provider) ? 'lumar-social' : 'lumar-integrations', { action: 'disconnect', provider: a.dataset.provider }); social.data = null; await loadIntegrations(); render(); } break;
       case 'task': inDetail?.close(); taskForm(null, a.dataset.watch ? { watch_id: a.dataset.watch, area: 'Verkoop' } : {}); break;
       case 'edit-task': inDetail?.close(); taskForm(id); break;
@@ -1914,7 +1911,7 @@ function showApp() {
   if (qs.get('connected')) { toast(({ onedrive: 'OneDrive', instagram: 'Instagram', tiktok: 'TikTok' }[qs.get('connected')] || 'Koppeling') + ' is gekoppeld'); history.replaceState(null, '', location.pathname + location.hash); }
   if (qs.get('koppelfout')) { toast('Koppelen mislukt: ' + qs.get('koppelfout'), 'bad'); history.replaceState(null, '', location.pathname + location.hash); }
   go(location.hash.slice(1) || 'home');
-  loadIntegrations().then(() => { if (['settings', 'inbox', 'mk-stats'].includes(route.page)) render(); });
+  loadIntegrations().then(() => { if (['settings', 'inbox', 'tiktok'].includes(route.page)) render(); });
   loadTeam().then(() => { if (route.page === 'settings') render(); });
   store.onPresence = () => { if (route.page === 'settings' && !$('#modalRoot').children.length && !document.activeElement?.matches('input,select,textarea')) render(); };
 }

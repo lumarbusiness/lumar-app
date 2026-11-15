@@ -410,3 +410,15 @@ label.btn { display: inline-flex; align-items: center; cursor: pointer; }
 .small { font-size: 13px; }
 @media (max-width: 560px) { .member { flex-wrap: wrap; } .member-meta { text-align: left; justify-items: start; width: 100%; padding-left: 52px; } }
 td.clip { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.banner.warn { background: #f8e1da; color: #7a2e1c; border-color: #efc2b5; margin-top: 10px; margin-bottom: 0; }
+/* TikTok-pagina */
+.tt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 16px; padding: 16px 20px 20px; }
+.tt-card { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--card); color: inherit; text-decoration: none; min-width: 0; }
+.tt-card:hover { border-color: var(--gold); }
+.tt-cover { position: relative; aspect-ratio: 9/16; max-height: 300px; background: linear-gradient(135deg, #2a2720, #141310); }
+.tt-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tt-views { position: absolute; left: 8px; bottom: 8px; color: #fff; font-weight: 700; font-size: 13px; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+.tt-body { padding: 10px 12px 12px; display: grid; gap: 3px; min-width: 0; }
+.tt-body b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tt-body small { font-size: 12px; }
+@media (max-width: 760px) { .tt-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 12px; } }

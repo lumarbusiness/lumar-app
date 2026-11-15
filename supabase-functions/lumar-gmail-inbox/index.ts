@@ -31,6 +31,8 @@ Deno.serve(async req => {
     const { data: row } = await db.from('integrations').select('secret_hash').eq('provider', 'gmail').maybeSingle();
     if (!row?.secret_hash || !body?.code || (await sha256(body.code)) !== row.secret_hash) return json({ error: 'Ongeldige koppelcode' }, 401);
     // Het script vraagt eerst welke mails het moet sturen (instelbaar in de app)
+    // elk contact van het script bijhouden, zodat de app ziet of het script nog draait
+    await db.from('integrations').update({ updated_at: new Date().toISOString() }).eq('provider', 'gmail');
     if (body.config) {
       const { data: st } = await db.from('settings').select('value').eq('key', 'gmail_scope').maybeSingle();
       const scope = (st?.value as string) || 'all';
