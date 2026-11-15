@@ -2,8 +2,24 @@
 import { admin, cors, json, sha256, BUCKET } from '../_shared/common.ts';
 
 const MIME_OK = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'text/plain'];
-const amountsIn = (text: string) => [...new Set([...String(text).matchAll(/€\s?(\d{1,3}(?:\.\d{3})*(?:,\d{2})|\d+(?:,\d{2})?)|(\d{1,3}(?:\.\d{3})*,\d{2})\s?(?:EUR|€)/g)]
-  .map(m => +(m[1] || m[2]).replace(/\./g, '').replace(',', '.')).filter(x => x > 0 && x < 100000))].slice(0, 5);
+// Bedragen herkennen in NL- en EN-notatie: €21.78, € 21,78, 1.234,56 EUR, €1,234.56, EUR 18
+const amountsIn = (text: string) => {
+  const re = /(?:€|EUR\b|euro\b)\s?(\d[\d.,]*\d|\d)|(\d[\d.,]*\d|\d)\s?(?:€|EUR\b|euro\b)(?!\s?\d)/gi;
+  const out: number[] = [];
+  for (const m of String(text).matchAll(re)) {
+    let s = m[1] || m[2];
+    const lastDot = s.lastIndexOf('.'), lastComma = s.lastIndexOf(',');
+    let dec = '';
+    if (lastDot >= 0 && lastComma >= 0) dec = lastDot > lastComma ? '.' : ',';
+    else if (lastDot >= 0 || lastComma >= 0) { const sep = lastDot >= 0 ? '.' : ','; const tail = s.length - s.lastIndexOf(sep) - 1; if (tail === 2 || (tail === 1 && s.split(sep).length === 2)) dec = sep; }
+    const thou = dec === '.' ? ',' : '.';
+    s = s.split(thou).join(''); if (dec) s = s.replace(dec, '.'); else s = s.replace(/[.,]/g, '');
+    const v = Math.round(parseFloat(s) * 100) / 100;
+    if (v > 0 && v < 1000000 && !out.includes(v)) out.push(v);
+  }
+  return out.slice(0, 6);
+};
+
 const b64 = (s: string) => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 
 Deno.serve(async req => {
@@ -14,6 +30,17 @@ Deno.serve(async req => {
     const db = admin();
     const { data: row } = await db.from('integrations').select('secret_hash').eq('provider', 'gmail').maybeSingle();
     if (!row?.secret_hash || !body?.code || (await sha256(body.code)) !== row.secret_hash) return json({ error: 'Ongeldige koppelcode' }, 401);
+    // Het script vraagt eerst welke mails het moet sturen (instelbaar in de app)
+    if (body.config) {
+      const { data: st } = await db.from('settings').select('value').eq('key', 'gmail_scope').maybeSingle();
+      const scope = (st?.value as string) || 'all';
+      const query = ({
+        all: '(in:inbox OR label:LUMAR)',
+        nopromo: '(in:inbox OR label:LUMAR) -category:promotions -category:social',
+        receipts: '(label:LUMAR OR from:(vinted OR chrono24 OR catawiki) OR subject:(bon OR factuur OR invoice OR receipt OR bestelling OR order OR betaling OR betaald))',
+      } as Record<string, string>)[scope] || '(in:inbox OR label:LUMAR)';
+      return json({ query, days: 30 });
+    }
     let stored = 0, skipped = 0;
     for (const m of (body.messages || []).slice(0, 30)) {
       if (!m?.id) continue;

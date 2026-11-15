@@ -333,13 +333,13 @@ function expenseForm(preset = {}) {
     fields: [
       { name: 'description', label: 'Omschrijving', required: true, wide: true, value: preset.description || '' },
       { name: 'date', label: 'Datum', type: 'date', value: today(), required: true },
-      { name: 'amount', label: 'Bedrag (€)', type: 'money', required: true },
+      { name: 'amount', label: 'Bedrag (€)', type: 'money', required: true, value: preset.amount },
       { name: 'category', label: 'Categorie', type: 'select', options: EXPENSE_CATEGORIES, value: preset.category },
       { name: 'watch_id', label: 'Hoort bij horloge (optioneel)', type: 'select', value: preset.watch_id, options: [['', '—'], ...linkable.map(w => [w.id, `${wname(w)} · ${STATUS[w.status]}`])] },
       { name: 'capitalized', label: 'Optellen bij de kostprijs van dit horloge', type: 'checkbox', wide: true, value: preset.capitalized, show: d => d.watch_id && d.category !== 'Retourkosten' },
       { name: 'payment', label: 'Betaling', type: 'select', value: preset.payment, options: [...paymentOptions, ['offset', 'Verrekend met terugbetaling verkoper']] },
       { name: 'paid_by', label: 'Betaald door', type: 'select', options: partners(), value: store.user?.name, show: d => d.payment === 'private' },
-      { name: 'receipt', label: 'Bon', type: 'file' },
+      { name: 'receipt', label: preset.receipt_path ? 'Bon (uit de mail is al gekozen; kies alleen een ander bestand als dat nodig is)' : 'Bon', type: 'file' },
     ],
     onSubmit: async d => {
       const amt = round2(d.amount);
@@ -351,7 +351,7 @@ function expenseForm(preset = {}) {
           toast('Verrekenen kan alleen bij Retourkosten van een teruggestuurd horloge waarvan de terugbetaling nog open staat', 'bad'); return false;
         }
       }
-      const receipt_path = await uploadReceipt(d.receipt);
+      const receipt_path = (await uploadReceipt(d.receipt)) || preset.receipt_path || null;
       const e = await store.insert('expenses', {
         date: d.date, description: d.description, amount: amt, category: d.category, payment_status: d.payment,
         paid_by: d.payment === 'private' ? d.paid_by : null, watch_id: d.watch_id || null, receipt_path, capitalized: cap,
@@ -361,6 +361,7 @@ function expenseForm(preset = {}) {
         await store.update('watches', w.id, { extra_costs: round2(n(w.extra_costs) + amt), total_cost: round2(n(w.total_cost) + amt), history: hist(w, `Kosten toegevoegd: ${d.description} (${euro(amt)})`, d.date) });
       }
       if (d.payment === 'paid') await addBank({ date: d.date, description: d.description, amount: -amt, type: 'expense', reference_id: `expense:${e.id}` });
+      try { await preset.after?.(); } catch (err) { console.warn(err); }
       toast(cap ? 'Kosten bij de kostprijs opgeteld' : 'Uitgave opgeslagen');
     },
   });
@@ -882,6 +883,8 @@ function render() {
   main.innerHTML = home ? launcher() : pages[route.page]();
   main.scrollTop = scroll;
   loadPhotos(main);
+  const ms = $('#mailSearch');
+  if (ms) ms.oninput = () => { ui.mailSearch = ms.value; const pos = ms.selectionStart; render(); const m2 = $('#mailSearch'); m2.focus(); m2.setSelectionRange(pos, pos); };
   const search = $('#stockSearch');
   if (search) search.oninput = () => { ui.stockSearch = search.value; const pos = search.selectionStart; render(); const s2 = $('#stockSearch'); s2.focus(); s2.setSelectionRange(pos, pos); };
 }
@@ -1367,35 +1370,54 @@ function settingsIntegrations() {
     <div class="integ">
       <div class="integ-row"><div><b>OneDrive</b><p class="muted">Bonnen, documenten en logo's automatisch naar <code>LUMAR/Bonnen/&lt;jaar&gt;/&lt;kwartaal&gt;/</code>, <code>LUMAR/Documenten/</code> en <code>LUMAR/Branding/</code>.</p>${status(od?.connected, od?.account)}</div>
         <div class="row-actions">${od?.connected ? '<button class="btn" data-action="onedrive-sync">Nu synchroniseren</button><button class="btn ghost danger-text" data-action="integ-disconnect" data-provider="onedrive">Ontkoppelen</button>' : `<button class="btn primary" data-action="onedrive-connect" ${pending ? 'disabled' : ''}>Koppel OneDrive</button>`}</div></div>
-      <div class="integ-row"><div><b>Gmail</b><p class="muted">Mails met het label <b>LUMAR</b> en bestelbevestigingen van Vinted, Chrono24 en Catawiki komen binnen onder Documenten → Mail.</p>${status(gm?.connected, gm?.connected ? 'info.lumarbusiness@gmail.com' : '')}</div>
+      <div class="integ-row"><div><b>Gmail</b><p class="muted">Mails komen binnen onder Documenten → Mail, waar je ze als bon koppelt.</p><label class="field inline"><span>Welke mails</span><select data-setting="gmail_scope">${options([['all', 'Alles uit de inbox (+ label LUMAR)'], ['nopromo', 'Inbox zonder Reclame en Sociaal'], ['receipts', 'Alleen bonnen, facturen en bestellingen']], S().settings.gmail_scope || 'all')}</select></label>${status(gm?.connected, gm?.connected ? 'info.lumarbusiness@gmail.com' : '')}</div>
         <div class="row-actions">${gm?.connected ? '<button class="btn" data-action="gmail-setup">Nieuwe koppelcode</button><button class="btn ghost danger-text" data-action="integ-disconnect" data-provider="gmail">Ontkoppelen</button>' : `<button class="btn primary" data-action="gmail-setup" ${pending ? 'disabled' : ''}>Koppel Gmail</button>`}</div></div>
       <div class="integ-row"><div><b>Instagram & TikTok</b><p class="muted">Zodra er zakelijke accounts zijn, kunnen posts en statistieken automatisch worden opgehaald. Tot die tijd vul je de resultaten per post zelf in onder Marketing.</p><span class="chip">Wacht op zakelijke accounts</span></div></div>
     </div></section>`;
 }
 
-const GMAIL_SCRIPT = (secret) => `// LUMAR – bonnen uit Gmail naar de LUMAR-app
+const GMAIL_SCRIPT = (secret) => `// LUMAR – mail uit Gmail naar de LUMAR-app (Documenten → Mail)
+// Welke mails worden meegenomen stel je in de app in: Instellingen → Koppelingen.
 const LUMAR_URL = '${config.SUPABASE_URL}/functions/v1/lumar-gmail-inbox';
 const LUMAR_CODE = '${secret}';
-const ZOEK = '(label:LUMAR OR (from:(vinted OR chrono24 OR catawiki) subject:(bestelling OR aankoop OR betaling OR betaald OR order OR bevestiging OR factuur))) -label:LUMAR-verwerkt newer_than:60d';
+
+function stuur(data) {
+  return UrlFetchApp.fetch(LUMAR_URL, { method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    payload: JSON.stringify(Object.assign({ code: LUMAR_CODE }, data)) });
+}
 
 function lumarSync() {
-  const klaar = GmailApp.getUserLabelByName('LUMAR-verwerkt') || GmailApp.createLabel('LUMAR-verwerkt');
-  for (const t of GmailApp.search(ZOEK, 0, 15)) {
-    const berichten = t.getMessages().map(m => ({
-      id: m.getId(), subject: m.getSubject(), from: m.getFrom(), date: m.getDate().toISOString(),
-      body: m.getPlainBody().slice(0, 20000),
-      attachments: m.getAttachments({ includeInlineImages: false }).filter(a => a.getSize() < 8000000)
-        .map(a => ({ name: a.getName(), mime: a.getContentType(), base64: Utilities.base64Encode(a.getBytes()) })),
-    }));
-    const r = UrlFetchApp.fetch(LUMAR_URL, { method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-      payload: JSON.stringify({ code: LUMAR_CODE, messages: berichten }) });
-    if (r.getResponseCode() === 200) t.addLabel(klaar); else console.log(r.getContentText());
+  const props = PropertiesService.getScriptProperties();
+  const cfgRes = stuur({ config: true });
+  if (cfgRes.getResponseCode() !== 200) { console.log(cfgRes.getContentText()); return; }
+  const cfg = JSON.parse(cfgRes.getContentText());
+  const start = Date.now();
+  const laatste = Number(props.getProperty('laatste') || 0);
+  const vanaf = laatste ? Math.floor(laatste / 1000) - 900 : Math.floor(start / 1000) - cfg.days * 86400;
+  let offset = 0, klaar = false;
+  while (Date.now() - start < 4 * 60 * 1000) {
+    const threads = GmailApp.search(cfg.query + ' after:' + vanaf, offset, 20);
+    if (!threads.length) { klaar = true; break; }
+    for (const t of threads) {
+      const berichten = t.getMessages().filter(m => m.getDate().getTime() / 1000 >= vanaf).map(m => ({
+        id: m.getId(), subject: m.getSubject(), from: m.getFrom(), date: m.getDate().toISOString(),
+        body: m.getPlainBody().slice(0, 20000),
+        attachments: m.getAttachments({ includeInlineImages: false }).filter(a => a.getSize() < 8000000)
+          .map(a => ({ name: a.getName(), mime: a.getContentType(), base64: Utilities.base64Encode(a.getBytes()) })),
+      }));
+      if (!berichten.length) continue;
+      const r = stuur({ messages: berichten });
+      if (r.getResponseCode() !== 200) { console.log(r.getContentText()); return; }
+    }
+    offset += threads.length;
   }
+  if (klaar) props.setProperty('laatste', String(start));
 }
 
 function installeer() {
   ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
   ScriptApp.newTrigger('lumarSync').timeBased().everyMinutes(15).create();
+  PropertiesService.getScriptProperties().deleteProperty('laatste');
   lumarSync();
 }
 `;
@@ -1406,9 +1428,9 @@ async function gmailSetup() {
   const dlg = openDialog(`<div class="modal-body wide"><header><div><div class="eyebrow">Koppelen</div><h2>Gmail koppelen</h2></div><button class="x" data-close>×</button></header>
     <ol class="steps">
       <li>Log in op Gmail met <b>info.lumarbusiness@gmail.com</b> en ga naar <b>script.google.com</b> → <b>Nieuw project</b>.</li>
-      <li>Haal de voorbeeldcode weg en plak de code hieronder erin (knop <b>Kopiëren</b>). Klik op 💾 opslaan.</li>
+      <li>Open het bestaande project (of maak een nieuw project), selecteer alle code, verwijder die en plak de code hieronder erin (knop <b>Kopiëren</b>). Klik op 💾 opslaan.</li>
       <li>Kies bovenaan de functie <b>installeer</b> en klik op <b>Uitvoeren</b>. Geef toestemming (Geavanceerd → Ga naar project).</li>
-      <li>Klaar: elke 15 minuten komen nieuwe mails binnen onder Documenten → Mail. Een mail handmatig toevoegen? Geef hem in Gmail het label <b>LUMAR</b>.</li>
+      <li>Klaar: elke 15 minuten komen nieuwe mails binnen onder Documenten → Mail. De eerste keer worden de mails van de afgelopen 30 dagen opgehaald.</li>
     </ol>
     <p class="muted">Deze code bevat een geheime sleutel en is alleen nu zichtbaar. Maak je later een nieuwe code, dan werkt de oude niet meer.</p>
     <textarea class="code" readonly rows="14">${esc(code)}</textarea>
@@ -1419,6 +1441,20 @@ async function gmailSetup() {
 
 // Mail-inbox: bijlagen koppelen als bon
 const mailFiles = m => [...(m.attachments || []), ...(m.body_path ? [{ path: m.body_path, name: 'E-mail (tekst)', mime: 'text/plain' }] : [])];
+async function openMail(id) {
+  const m = itemById(id);
+  const files = mailFiles(m).filter(f => f.mime !== 'text/plain');
+  const dlg = openDialog(`<div class="modal-body wide"><header><div><div class="eyebrow">${esc(m.from || '')}</div><h2>${esc(m.subject || '(geen onderwerp)')}</h2><small class="muted">${new Date(m.date).toLocaleString('nl-NL', { dateStyle: 'long', timeStyle: 'short' })}</small></div><button class="x" data-close>×</button></header>
+    ${m.amounts?.length ? `<div class="linked">${m.amounts.map(a => `<span class="chip">${euro(a)}</span>`).join('')}</div>` : ''}
+    ${files.length ? `<div class="linked" style="margin-top:8px">${files.map(a => `<button class="chip" data-action="file" data-path="${esc(a.path)}">📎 ${esc(a.name)}</button>`).join('')}</div>` : ''}
+    <pre class="mail-body">${esc(m.snippet || '')}…</pre>
+    <footer class="actions">${(m.status || 'new') === 'new' ? `<button class="btn primary" data-action="mail-link" data-id="${id}">Koppelen als bon</button><button class="btn" data-action="mail-expense" data-id="${id}">Nieuwe uitgave</button><button class="btn" data-action="mail-ignore" data-id="${id}">Negeren</button>` : `<span class="chip">${m.status === 'linked' ? '✓ Gekoppeld' : 'Genegeerd'}</span>`}</footer></div>`, 'detail');
+  if (m.body_path) {
+    try { const url = await store.fileUrl(m.body_path); const txt = url.startsWith('data:') ? atob(url.split(',')[1]) : await (await fetch(url)).text(); $('.mail-body', dlg).textContent = txt.replace(/^Van:.*\n.*\n.*\n\n/, ''); }
+    catch { /* laat het fragment staan */ }
+  }
+}
+
 function linkMailForm(id) {
   const m = itemById(id), files = mailFiles(m);
   const recs = receiptRecords(S());
@@ -1532,16 +1568,17 @@ Object.assign(pages, {
 
   inbox() {
     const all = items('mail'), f = ui.mailFilter;
-    const list = all.filter(m => (m.status || 'new') === f || f === 'all').sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const q = (ui.mailSearch || '').toLowerCase();
+    const list = all.filter(m => (m.status || 'new') === f || f === 'all').filter(m => !q || `${m.subject} ${m.from} ${m.snippet}`.toLowerCase().includes(q)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
     const cnt = s => all.filter(m => (m.status || 'new') === s).length;
     const ready = integ?.gmail?.connected;
     return head('Mail', 'Bonnen en bevestigingen uit Gmail. Koppel ze aan een inkoop of uitgave.') + itemsBanner() + `
       ${!ready ? `<div class="banner">Gmail is nog niet gekoppeld. Dat doe je bij <a class="link" data-go="instellingen/settings">Instellingen → Koppelingen</a>.</div>` : ''}
-      <div class="toolbar">${tabsHtml('mailFilter', [['new', 'Nieuw', cnt('new')], ['linked', 'Gekoppeld', cnt('linked')], ['ignored', 'Genegeerd', cnt('ignored')], ['all', 'Alles', all.length]])}</div>
-      ${list.length ? `<div class="mail-list">${list.map(m => `<article class="card mail"><div class="card-head"><div><b>${esc(m.subject || '(geen onderwerp)')}</b><br><small class="muted">${esc(m.from || '')} · ${fdate(String(m.date).slice(0, 10))}</small></div>${m.amounts?.length ? `<span class="badge">${m.amounts.slice(0, 3).map(a => euro(a)).join(' · ')}</span>` : ''}</div>
+      <div class="toolbar"><input class="search" id="mailSearch" placeholder="Zoek op onderwerp, afzender of tekst…" value="${esc(ui.mailSearch || '')}">${tabsHtml('mailFilter', [['new', 'Nieuw', cnt('new')], ['linked', 'Gekoppeld', cnt('linked')], ['ignored', 'Genegeerd', cnt('ignored')], ['all', 'Alles', all.length]])}</div>
+      ${list.length ? `<div class="mail-list">${list.slice(0, 150).map(m => `<article class="card mail" data-action="mail-open" data-id="${m.id}"><div class="card-head"><div><b>${esc(m.subject || '(geen onderwerp)')}</b><br><small class="muted">${esc(m.from || '')} · ${fdate(String(m.date).slice(0, 10))}</small></div>${m.amounts?.length ? `<span class="badge">${m.amounts.slice(0, 3).map(a => euro(a)).join(' · ')}</span>` : ''}</div>
         ${m.snippet ? `<p class="muted mail-snippet">${esc(m.snippet)}</p>` : ''}
         <div class="linked">${mailFiles(m).map(a => `<button class="chip" data-action="file" data-path="${esc(a.path)}">📎 ${esc(a.name)}</button>`).join('')}</div>
-        <div class="row-actions mail-actions">${(m.status || 'new') === 'new' ? `<button class="btn small primary" data-action="mail-link" data-id="${m.id}">Koppelen als bon</button><button class="btn small" data-action="mail-ignore" data-id="${m.id}">Negeren</button>` : `<span class="chip">${m.status === 'linked' ? '✓ Gekoppeld' : 'Genegeerd'}</span><button class="btn small ghost" data-action="mail-reset" data-id="${m.id}">Terugzetten</button>`}</div></article>`).join('')}</div>` : empty(ready ? 'Geen mails in deze lijst.' : 'Nog geen mails binnengekomen.')}`;
+        <div class="row-actions mail-actions">${(m.status || 'new') === 'new' ? `<button class="btn small primary" data-action="mail-link" data-id="${m.id}">Koppelen als bon</button><button class="btn small" data-action="mail-expense" data-id="${m.id}">Nieuwe uitgave</button><button class="btn small" data-action="mail-ignore" data-id="${m.id}">Negeren</button>` : `<span class="chip">${m.status === 'linked' ? '✓ Gekoppeld' : 'Genegeerd'}</span><button class="btn small ghost" data-action="mail-reset" data-id="${m.id}">Terugzetten</button>`}</div></article>`).join('')}</div>` : empty(ready ? 'Geen mails in deze lijst.' : 'Nog geen mails binnengekomen.')}`;
   },
 });
 
@@ -1561,8 +1598,10 @@ document.addEventListener('click', async e => {
       case 'hours-add': hoursForm(); break;
       case 'edit-hours': hoursForm(id); break;
       case 'vat-pay': { const v = vatReturn(S(), +a.dataset.y, +a.dataset.q); bankEntryForm({ type: 'vat_payment', amount: v.open, description: `Btw-afdracht K${v.q} ${v.year}`, reference_id: vatRef(v.year, v.q) }); break; }
-      case 'mail-link': linkMailForm(id); break;
-      case 'mail-ignore': await saveItem('mail', id, { status: 'ignored' }); render(); break;
+      case 'mail-link': $('dialog.detail')?.close(); linkMailForm(id); break;
+      case 'mail-open': await openMail(id); break;
+      case 'mail-expense': { $('dialog.detail')?.close(); const m = itemById(id); const f = mailFiles(m).find(x => x.mime !== 'text/plain') || mailFiles(m)[0]; expenseForm({ description: m.subject, amount: m.amounts?.[0], receipt_path: f?.path, after: () => saveItem('mail', id, { status: 'linked', linked_file: f?.path }) }); break; }
+      case 'mail-ignore': $('dialog.detail')?.close(); await saveItem('mail', id, { status: 'ignored' }); render(); break;
       case 'mail-reset': await saveItem('mail', id, { status: 'new' }); render(); break;
       case 'gmail-setup': await gmailSetup(); break;
       case 'onedrive-connect': { const r = await store.invoke('lumar-integrations', { action: 'onedrive-connect' }); location.href = r.url; break; }
