@@ -38,3 +38,18 @@ export const randomToken = (bytes = 24) => [...crypto.getRandomValues(new Uint8A
 
 // Bestandsnamen die OneDrive accepteert
 export const safeName = (s: string) => String(s || 'bestand').replace(/[\\/:*?"<>|#%]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'bestand';
+
+// ───── Instagram (Business Login for Instagram) en TikTok ─────
+export const IG_SCOPES = 'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights';
+export const IG_GRAPH = 'https://graph.instagram.com/v25.0';
+export const TT_SCOPES = Deno.env.get('TIKTOK_SCOPES') || 'user.info.basic,user.info.stats,video.list,video.upload';
+export const TT_API = 'https://open.tiktokapis.com/v2';
+
+// Wisselt een TikTok-code of refresh-token in voor nieuwe tokens
+export async function tiktokToken(params: Record<string, string>) {
+  const res = await fetch(`${TT_API}/oauth/token/`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_key: Deno.env.get('TIKTOK_CLIENT_KEY')!, client_secret: Deno.env.get('TIKTOK_CLIENT_SECRET')!, ...params }) });
+  const t = await res.json();
+  if (!res.ok || t.error) throw new HttpError(400, t.error_description || t.error || 'TikTok-token mislukt');
+  return t as { access_token: string; refresh_token: string; expires_in: number; open_id: string };
+}

@@ -152,7 +152,7 @@ async function cloudStore(config, onRemoteChange) {
       store.state.settings[key] = value;
     },
     async upload(blob, folder) {
-      const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
+      const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg').replace('quicktime', 'mov').replace('x-m4v', 'm4v');
       const path = `${folder}/${uuid()}.${ext}`;
       check(await sb.storage.from(BUCKET).upload(path, blob, { contentType: blob.type, upsert: false }));
       store.onUploaded?.(path);

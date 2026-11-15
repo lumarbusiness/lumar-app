@@ -406,3 +406,4 @@ label.btn { display: inline-flex; align-items: center; cursor: pointer; }
 .badge.plain { background: var(--line); color: var(--muted); }
 .small { font-size: 13px; }
 @media (max-width: 560px) { .member { flex-wrap: wrap; } .member-meta { text-align: left; justify-items: start; width: 100%; padding-left: 52px; } }
+td.clip { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

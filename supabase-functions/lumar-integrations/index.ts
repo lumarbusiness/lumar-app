@@ -67,7 +67,7 @@ Deno.serve(async req => {
         return json({ secret });
       }
       case 'disconnect': {
-        if (!['onedrive', 'gmail'].includes(body.provider)) throw new HttpError(400, 'Onbekende koppeling');
+        if (!['onedrive', 'gmail', 'instagram', 'tiktok'].includes(body.provider)) throw new HttpError(400, 'Onbekende koppeling');
         await db.from('integrations').delete().eq('provider', body.provider);
         return json({ ok: true });
       }
