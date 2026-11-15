@@ -233,6 +233,7 @@ export function reconcile(state) {
   for (const e of state.bank_entries) {
     if (!e.reference_id) { if (!MANUAL_BANK_TYPES.includes(e.type)) add('Bank', `Mutatie "${e.description}" zonder koppeling`); continue; }
     const [kind, id] = e.reference_id.split(':');
+    if (kind === 'vat') { if (e.type !== 'vat_payment') add('Bank', `Mutatie "${e.description}" is gekoppeld aan de btw maar is geen btw-afdracht`); continue; }
     const exists = { purchase: watchIds, sale: watchIds, refund: watchIds, 'customer-return': watchIds, 'cr-sale': watchIds, batch: batchIds, expense: expenseIds }[kind];
     if (!exists || !exists.has(id)) add('Bank', `Mutatie "${e.description}" (${n(e.amount).toFixed(2)}) verwijst naar iets dat niet meer bestaat`);
   }
@@ -261,6 +262,15 @@ export function actionItems(state) {
   for (const w of state.watches) {
     if (w.status === 'incoming' && w.purchase_date && daysBetween(w.purchase_date, today) > 10)
       items.push({ id: `late:${w.id}`, kind: 'late', watchId: w.id, date: w.purchase_date, description: `${w.brand} ${w.model}`, reason: `Al ${daysBetween(w.purchase_date, today)} dagen onderweg` });
+  }
+  if (state.settings?.vat_enabled) {
+    const y = +today.slice(0, 4), q = quarterOf(today);
+    for (const [yy, qq] of [[q === 1 ? y - 1 : y, q === 1 ? 4 : q - 1], [y, q]]) {
+      const v = vatReturn(state, yy, qq);
+      const daysLeft = daysBetween(today, v.deadline);
+      if (v.open > 0.005 && daysLeft <= 31 && today > v.to)
+        items.push({ id: `vat:${yy}-${qq}`, kind: 'vat', date: v.deadline, description: `Btw-aangifte K${qq} ${yy}`, reason: daysLeft < 0 ? `Deadline ${-daysLeft} dagen verstreken` : `Uiterlijk over ${daysLeft} dagen`, amount: v.open, direction: 'out' });
+    }
   }
   for (const r of missingReceipts(state))
     items.push({ id: `receipt:${r.table}:${r.id}`, kind: 'receipt', table: r.table, recordId: r.id, date: r.date, description: r.description, reason: 'Bon ontbreekt' });
@@ -332,4 +342,72 @@ export function toCsv(rows) {
     return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   return [cols.join(';'), ...rows.map(r => cols.map(c => esc(r[c])).join(';'))].join('\n');
+}
+
+// ───────────── Btw-aangifte (margeregeling) ─────────────
+export const quarterOf = date => Math.ceil(+String(date).slice(5, 7) / 3);
+export function quarterRange(year, q) {
+  return { from: `${year}-${String(q * 3 - 2).padStart(2, '0')}-01`, to: new Date(Date.UTC(year, q * 3, 0)).toISOString().slice(0, 10) };
+}
+// Uiterste datum aangifte + betaling: laatste dag van de maand na het kwartaal
+export const vatDeadline = (year, q) => new Date(Date.UTC(year, q * 3 + 1, 0)).toISOString().slice(0, 10);
+export const vatRef = (year, q) => `vat:${year}-K${q}`;
+
+export function vatReturn(state, year, q) {
+  const s = state.settings || {};
+  const { from, to } = quarterRange(year, q);
+  const rows = state.watches.filter(w => w.status === 'sold' && w.vat_scheme === 'margin' && inPeriod(w.sale_date, from, to))
+    .map(w => {
+      const margin = round2(n(w.sale_price) - n(w.purchase_price));
+      const vat = marginVat(w, s);
+      return { id: w.id, name: `${w.brand} ${w.model}`, date: w.sale_date, purchase: n(w.purchase_price), sale: n(w.sale_price), margin, vat, marginExcl: margin > 0 ? round2(margin - vat) : 0 };
+    }).sort((a, b) => a.date.localeCompare(b.date));
+  const noScheme = state.watches.filter(w => w.status === 'sold' && w.vat_scheme !== 'margin' && inPeriod(w.sale_date, from, to)).length;
+  const omzet = round2(rows.reduce((a, r) => a + r.marginExcl, 0));
+  const vat = round2(rows.reduce((a, r) => a + r.vat, 0));
+  const paid = round2(state.bank_entries.filter(e => e.type === 'vat_payment' && e.reference_id === vatRef(year, q)).reduce((a, e) => a + Math.abs(n(e.amount)), 0));
+  return { year, q, from, to, rows, noScheme, omzet, vat, omzetRounded: Math.floor(omzet), vatRounded: Math.floor(vat), paid, open: round2(vat - paid), deadline: vatDeadline(year, q), negatives: rows.filter(r => r.margin < 0).length };
+}
+
+// ───────────── Inkomstenbelasting (indicatief) ─────────────
+export const TAX_YEARS = {
+  2025: { selfEmployed: 2470, starter: 2123, mkb: 12.7, hours: 1225 },
+  2026: { selfEmployed: 1200, starter: 2123, mkb: 12.7, hours: 1225 },
+};
+export const taxYear = y => TAX_YEARS[y] || TAX_YEARS[Math.max(...Object.keys(TAX_YEARS).map(Number))];
+
+export function hoursByPerson(items, year) {
+  const out = {};
+  for (const h of items.filter(i => i.module === 'hours' && String(i.data?.date).startsWith(String(year)))) out[h.data.person] = round2((out[h.data.person] || 0) + n(h.data.hours));
+  return out;
+}
+
+export function incomeTax(state, year) {
+  const s = state.settings || {};
+  const partners = s.partners || ['Luuk', 'Marijn'];
+  const shares = s.profit_shares || {};
+  const t = taxYear(year);
+  const result = calc(state, { from: `${year}-01-01`, to: `${year}-12-31` }).result;
+  const parts = splitMoney(Math.abs(result), partners.map(p => n(shares[p] ?? 100 / partners.length))).map(x => result < 0 ? -x : x);
+  const hours = hoursByPerson(state.items || [], year);
+  const reservePct = n(s.tax_reserve_pct ?? 35);
+  return partners.map((p, i) => {
+    const profit = parts[i];
+    const h = hours[p] || 0;
+    const meetsHours = h >= t.hours;
+    const selfEmployed = meetsHours && profit > 0 ? Math.min(t.selfEmployed, profit) : 0;
+    const starter = meetsHours && s.starters?.[p] && profit > 0 ? Math.min(t.starter, profit - selfEmployed) : 0;
+    const afterDeductions = round2(profit - selfEmployed - starter);
+    const mkb = round2(afterDeductions * t.mkb / 100);
+    const taxable = round2(afterDeductions - mkb);
+    const reserve = taxable > 0 ? round2(taxable * reservePct / 100) : 0;
+    return { partner: p, profit, hours: h, hoursNeeded: t.hours, meetsHours, selfEmployed, starter, mkb, taxable, reservePct, reserve };
+  });
+}
+
+export function taxPot(state, year) {
+  const it = incomeTax(state, year);
+  const vat = state.settings?.vat_enabled ? Math.max(0, vatOwed(state)) : 0;
+  const ib = round2(it.reduce((a, p) => a + p.reserve, 0));
+  return { vat, ib, total: round2(vat + ib), perPartner: it };
 }

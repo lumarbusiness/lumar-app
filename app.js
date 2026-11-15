@@ -5,12 +5,13 @@ import {
   watchProfit, calc, bankBalance, pendingPayments, partnerCapital, actionItems, daysBetween, monthlyResults,
   quarterlyVat, groupSold, linkedReturnCosts, toCsv, inPeriod, customerReturns, capitalizedSum, purchaseAmount,
   vatOwed, reconcile, receiptRecords, missingReceipts, MANUAL_BANK_TYPES,
+  vatReturn, quarterOf, vatRef, incomeTax, taxPot, taxYear, hoursByPerson,
 } from './logic.js';
 
 // ───────────── Hulpjes ─────────────
 let store;
 let route = { mod: 'home', page: null };
-const ui = { stockFilter: 'active', stockSearch: '', period: 'year', salesPeriod: 'year', expensePeriod: 'year', taskOwner: 'all', ideaFilter: 'open', wishFilter: 'searching', postFilter: 'open', calMonth: null, docFilter: 'all', receiptFilter: 'missing' };
+const ui = { stockFilter: 'active', stockSearch: '', period: 'year', salesPeriod: 'year', expensePeriod: 'year', taskOwner: 'all', ideaFilter: 'open', wishFilter: 'searching', postFilter: 'open', calMonth: null, docFilter: 'all', receiptFilter: 'missing', vatYear: null, vatQ: null, taxYear: null, hoursPerson: 'all', mailFilter: 'new' };
 const $ = (s, el = document) => el.querySelector(s);
 const S = () => store.state;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -598,23 +599,23 @@ function settleForm(pid) {
   });
 }
 
-function bankEntryForm() {
+function bankEntryForm(preset = {}) {
   const owed = vatOwed(S());
   openForm({
     eyebrow: 'Bank', title: 'Mutatie toevoegen', submit: 'Opslaan',
     intro: 'Inkopen, verkopen en uitgaven worden automatisch geboekt. Gebruik dit alleen voor stortingen en opnames van vennoten, overige opbrengsten en btw-afdracht.',
     fields: [
-      { name: 'type', label: 'Soort', type: 'select', options: [['owner_deposit', 'Storting door vennoot (bv. startkapitaal)'], ['owner_withdrawal', 'Opname door vennoot'], ['income', 'Overige opbrengst (rente, cashback)'], ['vat_payment', 'Btw-afdracht aan Belastingdienst']] },
+      { name: 'type', label: 'Soort', type: 'select', value: preset.type, options: [['owner_deposit', 'Storting door vennoot (bv. startkapitaal)'], ['owner_withdrawal', 'Opname door vennoot'], ['income', 'Overige opbrengst (rente, cashback)'], ['vat_payment', 'Btw-afdracht aan Belastingdienst']] },
       { name: 'partner', label: 'Vennoot', type: 'select', options: partners(), value: store.user?.name, show: d => d.type.startsWith('owner') },
       { name: 'date', label: 'Datum', type: 'date', value: today(), required: true },
-      { name: 'amount', label: 'Bedrag (€)', type: 'money', required: true, hint: owed > 0 ? `Nog af te dragen btw volgens de app: ${euro(owed)}` : '' },
-      { name: 'description', label: 'Omschrijving', wide: true },
+      { name: 'amount', label: 'Bedrag (€)', type: 'money', required: true, value: preset.amount, hint: owed > 0 ? `Nog af te dragen btw volgens de app: ${euro(owed)}` : '' },
+      { name: 'description', label: 'Omschrijving', wide: true, value: preset.description },
     ],
     onSubmit: async d => {
       const amt = round2(d.amount);
       if (amt <= 0) { toast('Vul een bedrag groter dan 0 in', 'bad'); return false; }
       const out = ['owner_withdrawal', 'vat_payment'].includes(d.type);
-      await addBank({ date: d.date, type: d.type, partner: d.type.startsWith('owner') ? d.partner : null, amount: out ? -amt : amt, description: d.description || (BANK_TYPES[d.type] + (d.type.startsWith('owner') ? ` · ${d.partner}` : '')) });
+      await addBank({ date: d.date, type: d.type, partner: d.type.startsWith('owner') ? d.partner : null, reference_id: d.type === 'vat_payment' && preset.reference_id ? preset.reference_id : null, amount: out ? -amt : amt, description: d.description || (BANK_TYPES[d.type] + (d.type.startsWith('owner') ? ` · ${d.partner}` : '')) });
       toast('Mutatie opgeslagen');
     },
   });
@@ -726,7 +727,7 @@ const pages = {
       </section>
       <section class="cols">
         <div class="card"><div class="card-head"><h2>Actie nodig</h2><span class="badge">${acts.length}</span></div>
-          ${acts.length ? `<ul class="list">${acts.slice(0, 8).map(a => `<li ${a.watchId ? `data-action="watch" data-id="${a.watchId}"` : a.kind === 'receipt' ? `data-action="receipt-add" data-table="${a.table}" data-id="${a.recordId}"` : 'data-go="bank"'}><div><b>${esc(a.description)}</b><small>${a.reason} · ${fdate(a.date)}</small></div>${a.amount !== undefined ? `<span class="${a.direction === 'in' ? 'good' : 'bad'}">${a.direction === 'in' ? '+' : '−'}${euro(a.amount)}</span>` : '<span class="chev">›</span>'}</li>`).join('')}</ul>` : empty('Alles is bijgewerkt.')}
+          ${acts.length ? `<ul class="list">${acts.slice(0, 8).map(a => `<li ${a.watchId ? `data-action="watch" data-id="${a.watchId}"` : a.kind === 'receipt' ? `data-action="receipt-add" data-table="${a.table}" data-id="${a.recordId}"` : a.kind === 'vat' ? 'data-go="financien/vat"' : 'data-go="bank"'}><div><b>${esc(a.description)}</b><small>${a.reason} · ${fdate(a.date)}</small></div>${a.amount !== undefined ? `<span class="${a.direction === 'in' ? 'good' : 'bad'}">${a.direction === 'in' ? '+' : '−'}${euro(a.amount)}</span>` : '<span class="chev">›</span>'}</li>`).join('')}</ul>` : empty('Alles is bijgewerkt.')}
         </div>
         <div class="card"><div class="card-head"><h2>Recent</h2><a data-go="stock">Alle horloges ›</a></div>
           ${recent.length ? `<ul class="list">${recent.map(w => `<li data-action="watch" data-id="${w.id}"><div class="photo sm" data-photo="${esc(w.photo_path || '')}"><span>${esc(w.brand[0])}</span></div><div><b>${esc(wname(w))}</b><small>${STATUS[w.status]}</small></div><span>${w.status === 'sold' ? signed(watchProfit(w, st.settings)) : euro(w.total_cost)}</span></li>`).join('')}</ul>` : empty('Nog geen horloges. Begin met je eerste inkoop.', '<button class="btn primary" data-action="purchase">＋ Inkoop</button>')}
@@ -857,6 +858,8 @@ const pages = {
         <div class="grid">${partners().map(p => `<label class="field"><span>${esc(p)} (%)</span><input type="number" min="0" max="100" data-share="${esc(p)}" value="${n(s.profit_shares?.[p] ?? 100 / partners().length)}"></label>`).join('')}</div>
         <button class="btn" data-action="save-shares">Verdeling opslaan</button>
       </section>
+      ${settingsTax()}
+      ${settingsIntegrations()}
       <section class="card"><div class="card-head"><h2>App</h2></div>
         <p>Ingelogd als <b>${esc(store.user?.name)}</b>${store.user?.email ? ` (${esc(store.user.email)})` : ''}.</p>
         <p class="muted">${store.mode === 'demo' ? '⚠︎ Demomodus: de gegevens staan alleen in deze browser. Koppel Supabase via config.js om samen te werken.' : 'Verbonden met de gedeelde LUMAR-database. Wijzigingen zijn direct zichtbaar voor jullie allebei.'}</p>
@@ -927,12 +930,12 @@ const icon = (k, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill=
 
 const MODULES = {
   voorraad: { name: 'Voorraad', desc: 'Horloges, inkoop en verkoop', color: '#8a6a35', pages: [['stock', 'Voorraad'], ['sales', 'Verkopen']], quick: [['purchase', '＋ Inkoop', 'primary'], ['sale', '＋ Verkoop']] },
-  financien: { name: 'Financiën', desc: 'Resultaat, uitgaven, bank en vennoten', color: '#2f6b4f', pages: [['dashboard', 'Overzicht'], ['expenses', 'Uitgaven'], ['bank', 'Bank'], ['reports', 'Rapportages'], ['partners', 'Vennoten'], ['check', 'Controle']], quick: [['expense', '＋ Uitgave', 'primary'], ['bank-entry', '＋ Bankmutatie']] },
-  marketing: { name: 'Marketing', desc: 'Contentkalender en posts', color: '#9a4a3a', pages: [['mk-overview', 'Overzicht'], ['calendar', 'Kalender'], ['posts', 'Alle posts']], quick: [['post', '＋ Post', 'primary']] },
+  financien: { name: 'Financiën', desc: 'Resultaat, uitgaven, bank en vennoten', color: '#2f6b4f', pages: [['dashboard', 'Overzicht'], ['expenses', 'Uitgaven'], ['bank', 'Bank'], ['reports', 'Rapportages'], ['partners', 'Vennoten'], ['vat', 'Btw-aangifte'], ['tax', 'Belastingen'], ['check', 'Controle']], quick: [['expense', '＋ Uitgave', 'primary'], ['bank-entry', '＋ Bankmutatie']] },
+  marketing: { name: 'Marketing', desc: 'Contentkalender en posts', color: '#9a4a3a', pages: [['mk-overview', 'Overzicht'], ['calendar', 'Kalender'], ['posts', 'Alle posts'], ['mk-stats', 'Statistieken']], quick: [['post', '＋ Post', 'primary']] },
   ideeen: { name: 'Ideeën', desc: 'Ideeënbord en wishlist', color: '#a2802a', pages: [['ideas', 'Ideeënbord'], ['wishlist', 'Wishlist']], quick: [['idea', '＋ Idee', 'primary'], ['wish', '＋ Wens']] },
-  taken: { name: 'Taken', desc: 'Wie doet wat, en wanneer', color: '#3c5f8a', pages: [['tasks', 'Takenbord']], quick: [['task', '＋ Taak', 'primary']] },
+  taken: { name: 'Taken', desc: 'Wie doet wat, en wanneer', color: '#3c5f8a', pages: [['tasks', 'Takenbord'], ['hours', 'Uren']], quick: [['task', '＋ Taak', 'primary'], ['hours-add', '＋ Uren']] },
   branding: { name: 'Branding', desc: "Kleuren, logo's en vaste teksten", color: '#6b4f8a', pages: [['brand', 'Merkkit']], quick: [] },
-  documenten: { name: 'Documenten', desc: 'Bonnen, contracten en certificaten', color: '#46696a', pages: [['receipts', 'Bonnen'], ['docs', 'Documenten']], quick: [['doc', '＋ Document', 'primary']] },
+  documenten: { name: 'Documenten', desc: 'Bonnen, contracten en certificaten', color: '#46696a', pages: [['receipts', 'Bonnen'], ['inbox', 'Mail'], ['docs', 'Documenten']], quick: [['doc', '＋ Document', 'primary']] },
   instellingen: { name: 'Instellingen', desc: 'Btw, winstverdeling en account', color: '#5f5a50', pages: [['settings', 'Instellingen']], quick: [] },
 };
 const moduleOf = p => Object.keys(MODULES).find(m => MODULES[m].pages.some(([k]) => k === p));
@@ -1057,6 +1060,12 @@ function postForm(id, preset = {}) {
       { name: 'owner', label: 'Wie', type: 'select', options: [...partners(), 'Samen'], value: p.owner },
       { name: 'watch_id', label: 'Horloge', type: 'select', options: watchOptions(), value: p.watch_id },
       { name: 'caption', label: 'Tekst / caption', type: 'textarea', wide: true, value: p.caption },
+      { type: 'section', label: 'Resultaat (na plaatsen)', name: 'stats-head', show: d => d.status === 'posted' },
+      { name: 'url', label: 'Link naar de post', type: 'url', wide: true, value: p.url, placeholder: 'https://', show: d => d.status === 'posted' },
+      { name: 'views', label: 'Weergaven', type: 'number', value: p.views, show: d => d.status === 'posted' },
+      { name: 'likes', label: 'Likes', type: 'number', value: p.likes, show: d => d.status === 'posted' },
+      { name: 'comments', label: 'Reacties', type: 'number', value: p.comments, show: d => d.status === 'posted' },
+      { name: 'saves', label: 'Bewaard / gedeeld', type: 'number', value: p.saves, show: d => d.status === 'posted' },
     ],
     onSubmit: async d => { await saveItem('post', id, d); toast('Post opgeslagen'); },
     onDelete: id ? () => deleteItem(id, 'Post') : null,
@@ -1124,7 +1133,7 @@ function launcher() {
       <div class="card"><div class="card-head"><h2>Posts deze week</h2><a data-go="marketing/calendar">Kalender ›</a></div>
         ${upcoming.length ? `<ul class="list">${upcoming.slice(0, 6).map(p => `<li data-action="edit-post" data-id="${p.id}"><div><b>${esc(p.title)}</b><small>${esc(p.channel)} · ${fdate(p.date)}${p.time ? ' ' + p.time : ''}</small></div><span class="chip ps-${p.status}">${postLabel(p.status)}</span></li>`).join('')}</ul>` : empty('Niets gepland deze week.', '<button class="btn small" data-action="post">＋ Post</button>')}</div>
       <div class="card"><div class="card-head"><h2>Actie nodig</h2><a data-go="financien/bank">Bank ›</a></div>
-        ${acts.length ? `<ul class="list">${acts.slice(0, 6).map(a => `<li ${a.watchId ? `data-action="watch" data-id="${a.watchId}"` : a.kind === 'receipt' ? `data-action="receipt-add" data-table="${a.table}" data-id="${a.recordId}"` : 'data-go="financien/bank"'}><div><b>${esc(a.description)}</b><small>${a.reason}</small></div>${a.amount !== undefined ? `<span class="${a.direction === 'in' ? 'good' : 'bad'}">${a.direction === 'in' ? '+' : '−'}${euro(a.amount)}</span>` : '<span class="chev">›</span>'}</li>`).join('')}</ul>` : empty('Alles is bijgewerkt.')}</div>
+        ${acts.length ? `<ul class="list">${acts.slice(0, 6).map(a => `<li ${a.watchId ? `data-action="watch" data-id="${a.watchId}"` : a.kind === 'receipt' ? `data-action="receipt-add" data-table="${a.table}" data-id="${a.recordId}"` : a.kind === 'vat' ? 'data-go="financien/vat"' : 'data-go="financien/bank"'}><div><b>${esc(a.description)}</b><small>${a.reason}</small></div>${a.amount !== undefined ? `<span class="${a.direction === 'in' ? 'good' : 'bad'}">${a.direction === 'in' ? '+' : '−'}${euro(a.amount)}</span>` : '<span class="chev">›</span>'}</li>`).join('')}</ul>` : empty('Alles is bijgewerkt.')}</div>
     </section></div>`;
 }
 
@@ -1301,6 +1310,241 @@ Object.assign(pages, {
   },
 });
 
+// ───────────── Belastingen, uren, statistieken, koppelingen ─────────────
+const curQuarter = () => ({ y: +today().slice(0, 4), q: quarterOf(today()) });
+const progress = (val, max) => `<div class="bar"><span style="width:${Math.min(100, max ? val / max * 100 : 0)}%"></span></div>`;
+
+const HOUR_ACTIVITIES = ['Inkoop & zoeken', 'Verkoop & klanten', 'Marketing & content', 'Administratie', 'Service & onderhoud', 'Overig'];
+function hoursForm(id, preset = {}) {
+  const h = id ? itemById(id) : { date: today(), person: store.user.name, activity: 'Inkoop & zoeken', ...preset };
+  openForm({
+    eyebrow: 'Urenregistratie', title: id ? 'Uren bewerken' : 'Uren schrijven',
+    intro: 'Voor de zelfstandigenaftrek moet ieder van jullie minimaal 1.225 uur per jaar aan LUMAR besteden. Schrijf je uren daarom bij, ook voor zoeken, fotograferen en administratie.',
+    fields: [
+      { name: 'date', label: 'Datum', type: 'date', required: true, value: h.date },
+      { name: 'person', label: 'Wie', type: 'select', options: partners(), value: h.person },
+      { name: 'hours', label: 'Uren', type: 'number', required: true, value: h.hours, placeholder: 'bv. 2,5' },
+      { name: 'activity', label: 'Soort werk', type: 'select', options: HOUR_ACTIVITIES, value: h.activity },
+      { name: 'note', label: 'Omschrijving', wide: true, value: h.note, placeholder: 'bv. Vinted afgezocht naar Seiko 5' },
+    ],
+    onSubmit: async d => {
+      const hrs = round2(String(d.hours).replace(',', '.'));
+      if (hrs <= 0 || hrs > 24) { toast('Vul een aantal uren tussen 0 en 24 in', 'bad'); return false; }
+      await saveItem('hours', id, { ...d, hours: hrs }); toast('Uren opgeslagen');
+    },
+    onDelete: id ? () => deleteItem(id, 'Urenregel') : null,
+  });
+}
+
+function settingsTax() {
+  const s = S().settings;
+  return `<section class="card"><div class="card-head"><h2>Belastingen</h2></div>
+    <div class="grid"><label class="field"><span>Reserve inkomstenbelasting (% van de belastbare winst)</span><input type="number" min="0" max="60" data-setting-num="tax_reserve_pct" value="${n(s.tax_reserve_pct ?? 35)}"><small>Hoeveel je opzij zet voor de inkomstenbelasting. Bespreek dit percentage met je boekhouder.</small></label></div>
+    <p class="muted">Startersaftrek (eerste jaren, alleen met urencriterium):</p>
+    <div class="row-actions">${partners().map(p => `<label class="check"><input type="checkbox" data-starter="${esc(p)}" ${s.starters?.[p] ? 'checked' : ''}> ${esc(p)} heeft recht op startersaftrek</label>`).join('')}</div>
+  </section>`;
+}
+
+let integ = null; // status van koppelingen
+async function loadIntegrations() {
+  if (store.mode !== 'cloud') { integ = { unavailable: true }; return; }
+  try { const rows = await store.rpc('integration_status'); integ = Object.fromEntries((rows || []).map(r => [r.provider, r])); }
+  catch { integ = { unavailable: true }; }
+}
+let syncTimer = null;
+function scheduleOneDriveSync() {
+  if (!integ?.onedrive?.connected) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => store.invoke('lumar-integrations', { action: 'onedrive-sync' }).catch(e => console.warn('OneDrive', e)), 4000);
+}
+
+function settingsIntegrations() {
+  const pending = !integ || integ.unavailable;
+  const od = integ?.onedrive, gm = integ?.gmail;
+  const status = (c, txt) => `<span class="chip ${c ? 'ps-posted' : ''}">${c ? '● Gekoppeld' : '○ Niet gekoppeld'}</span>${txt ? ` <small class="muted">${esc(txt)}</small>` : ''}`;
+  return `<section class="card"><div class="card-head"><h2>Koppelingen</h2></div>
+    ${pending ? '<div class="banner">De koppelingen zijn klaar in de app, maar moeten nog één keer worden aangezet in Supabase (database-update en serverfuncties). Dat doen we samen.</div>' : ''}
+    <div class="integ">
+      <div class="integ-row"><div><b>OneDrive</b><p class="muted">Bonnen, documenten en logo's automatisch naar <code>LUMAR/Bonnen/&lt;jaar&gt;/&lt;kwartaal&gt;/</code>, <code>LUMAR/Documenten/</code> en <code>LUMAR/Branding/</code>.</p>${status(od?.connected, od?.account)}</div>
+        <div class="row-actions">${od?.connected ? '<button class="btn" data-action="onedrive-sync">Nu synchroniseren</button><button class="btn ghost danger-text" data-action="integ-disconnect" data-provider="onedrive">Ontkoppelen</button>' : `<button class="btn primary" data-action="onedrive-connect" ${pending ? 'disabled' : ''}>Koppel OneDrive</button>`}</div></div>
+      <div class="integ-row"><div><b>Gmail</b><p class="muted">Mails met het label <b>LUMAR</b> en bestelbevestigingen van Vinted, Chrono24 en Catawiki komen binnen onder Documenten → Mail.</p>${status(gm?.connected, gm?.connected ? 'info.lumarbusiness@gmail.com' : '')}</div>
+        <div class="row-actions">${gm?.connected ? '<button class="btn" data-action="gmail-setup">Nieuwe koppelcode</button><button class="btn ghost danger-text" data-action="integ-disconnect" data-provider="gmail">Ontkoppelen</button>' : `<button class="btn primary" data-action="gmail-setup" ${pending ? 'disabled' : ''}>Koppel Gmail</button>`}</div></div>
+      <div class="integ-row"><div><b>Instagram & TikTok</b><p class="muted">Zodra er zakelijke accounts zijn, kunnen posts en statistieken automatisch worden opgehaald. Tot die tijd vul je de resultaten per post zelf in onder Marketing.</p><span class="chip">Wacht op zakelijke accounts</span></div></div>
+    </div></section>`;
+}
+
+const GMAIL_SCRIPT = (secret) => `// LUMAR – bonnen uit Gmail naar de LUMAR-app
+const LUMAR_URL = '${config.SUPABASE_URL}/functions/v1/lumar-gmail-inbox';
+const LUMAR_CODE = '${secret}';
+const ZOEK = '(label:LUMAR OR (from:(vinted OR chrono24 OR catawiki) subject:(bestelling OR aankoop OR betaling OR betaald OR order OR bevestiging OR factuur))) -label:LUMAR-verwerkt newer_than:60d';
+
+function lumarSync() {
+  const klaar = GmailApp.getUserLabelByName('LUMAR-verwerkt') || GmailApp.createLabel('LUMAR-verwerkt');
+  for (const t of GmailApp.search(ZOEK, 0, 15)) {
+    const berichten = t.getMessages().map(m => ({
+      id: m.getId(), subject: m.getSubject(), from: m.getFrom(), date: m.getDate().toISOString(),
+      body: m.getPlainBody().slice(0, 20000),
+      attachments: m.getAttachments({ includeInlineImages: false }).filter(a => a.getSize() < 8000000)
+        .map(a => ({ name: a.getName(), mime: a.getContentType(), base64: Utilities.base64Encode(a.getBytes()) })),
+    }));
+    const r = UrlFetchApp.fetch(LUMAR_URL, { method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      payload: JSON.stringify({ code: LUMAR_CODE, messages: berichten }) });
+    if (r.getResponseCode() === 200) t.addLabel(klaar); else console.log(r.getContentText());
+  }
+}
+
+function installeer() {
+  ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('lumarSync').timeBased().everyMinutes(15).create();
+  lumarSync();
+}
+`;
+
+async function gmailSetup() {
+  const res = await store.invoke('lumar-integrations', { action: 'gmail-secret' });
+  const code = GMAIL_SCRIPT(res.secret);
+  const dlg = openDialog(`<div class="modal-body wide"><header><div><div class="eyebrow">Koppelen</div><h2>Gmail koppelen</h2></div><button class="x" data-close>×</button></header>
+    <ol class="steps">
+      <li>Log in op Gmail met <b>info.lumarbusiness@gmail.com</b> en ga naar <b>script.google.com</b> → <b>Nieuw project</b>.</li>
+      <li>Haal de voorbeeldcode weg en plak de code hieronder erin (knop <b>Kopiëren</b>). Klik op 💾 opslaan.</li>
+      <li>Kies bovenaan de functie <b>installeer</b> en klik op <b>Uitvoeren</b>. Geef toestemming (Geavanceerd → Ga naar project).</li>
+      <li>Klaar: elke 15 minuten komen nieuwe mails binnen onder Documenten → Mail. Een mail handmatig toevoegen? Geef hem in Gmail het label <b>LUMAR</b>.</li>
+    </ol>
+    <p class="muted">Deze code bevat een geheime sleutel en is alleen nu zichtbaar. Maak je later een nieuwe code, dan werkt de oude niet meer.</p>
+    <textarea class="code" readonly rows="14">${esc(code)}</textarea>
+    <footer><button class="btn primary" data-copy>Kopiëren</button><button class="btn" data-close>Sluiten</button></footer></div>`);
+  $('[data-copy]', dlg).onclick = async () => { await navigator.clipboard.writeText(code); toast('Code gekopieerd'); };
+  await loadIntegrations(); render();
+}
+
+// Mail-inbox: bijlagen koppelen als bon
+const mailFiles = m => [...(m.attachments || []), ...(m.body_path ? [{ path: m.body_path, name: 'E-mail (tekst)', mime: 'text/plain' }] : [])];
+function linkMailForm(id) {
+  const m = itemById(id), files = mailFiles(m);
+  const recs = receiptRecords(S());
+  const open = recs.filter(r => !r.path), rest = recs.filter(r => r.path);
+  const label = r => `${fdate(r.date)} · ${r.description} · ${euro(r.amount)}`;
+  openForm({
+    eyebrow: 'Mail koppelen', title: m.subject || '(geen onderwerp)',
+    intro: `${esc(m.from || '')}${m.amounts?.length ? ` · bedragen in de mail: ${m.amounts.map(a => euro(a)).join(', ')}` : ''}`,
+    fields: [
+      { name: 'file', label: 'Welk bestand is de bon?', type: 'select', wide: true, options: files.map((f, i) => [i, f.name]) },
+      { name: 'target', label: 'Koppelen aan', type: 'select', wide: true, options: [['', '— kies een inkoop of uitgave —'], ...open.map(r => [`${r.table}:${r.id}`, '⚠︎ ' + label(r)]), ...rest.map(r => [`${r.table}:${r.id}`, label(r) + ' (heeft al een bon)'])] },
+    ],
+    submit: 'Koppelen',
+    onSubmit: async d => {
+      if (!d.target) { toast('Kies waar de bon bij hoort', 'bad'); return false; }
+      const [table, rid] = d.target.split(':');
+      const f = files[+d.file];
+      await store.update(table, rid, { receipt_path: f.path });
+      await saveItem('mail', id, { status: 'linked', linked: d.target, linked_file: f.path });
+      toast('Bon gekoppeld'); scheduleOneDriveSync();
+    },
+  });
+}
+
+Object.assign(pages, {
+  vat() {
+    const st = S(), cq = curQuarter();
+    // Standaard: vorig kwartaal zolang de deadline daarvan nog niet voorbij is, anders het huidige
+    const prev = cq.q === 1 ? { y: cq.y - 1, q: 4 } : { y: cq.y, q: cq.q - 1 };
+    const def = today() <= vatReturn(st, prev.y, prev.q).deadline ? prev : cq;
+    const yy = +(ui.vatYear || def.y), q = +(ui.vatQ || def.q);
+    const v = vatReturn(st, yy, q);
+    const daysLeft = daysBetween(today(), v.deadline);
+    const years = [...new Set([cq.y, cq.y - 1, ...st.watches.filter(w => w.sale_date).map(w => +w.sale_date.slice(0, 4))])].sort((a, b) => b - a);
+    if (!st.settings.vat_enabled) return head('Btw-aangifte') + `<div class="banner">De btw-berekening staat uit (bijvoorbeeld omdat jullie de kleineondernemersregeling gebruiken). Zet hem aan bij Instellingen als jullie btw moeten afdragen.</div>`;
+    const state = v.vat <= 0 ? ['ok', 'Niets af te dragen in dit kwartaal. Doe wel aangifte (met € 0) als de Belastingdienst die heeft klaargezet.'] : v.open <= 0.005 ? ['ok', `Afgedragen: ${euro(v.paid)}. Dit kwartaal is klaar.`] : today() <= v.to ? ['', `Het kwartaal loopt nog. Tot nu toe ${euro(v.vat)} btw.`] : daysLeft < 0 ? ['bad', `De deadline (${fdate(v.deadline)}) is ${-daysLeft} dagen verstreken. Nog af te dragen: ${euro(v.open)}.`] : ['bad', `Nog ${daysLeft} dagen: aangifte en betaling uiterlijk ${fdate(v.deadline)}. Nog af te dragen: ${euro(v.open)}.`];
+    return head('Btw-aangifte', 'Per kwartaal, volgens de margeregeling. Aangifte doe je in Mijn Belastingdienst Zakelijk.', `<select class="period" data-uikey="vatYear">${options(years.map(x => [x, x]), yy)}</select>`) + `
+      <div class="toolbar"><div class="tabs">${[1, 2, 3, 4].map(k => `<button class="${k === q ? 'on' : ''}" data-action="set-ui" data-key="vatQ" data-value="${k}">K${k} <small>${fdate(vatReturn(st, yy, k).deadline)}</small></button>`).join('')}</div></div>
+      <div class="check-banner big ${state[0]}">${state[1]}</div>
+      <section class="cols">
+        <div class="card"><div class="card-head"><h2>Invullen bij de aangifte</h2><span class="badge">K${q} ${yy}</span></div><div class="statement">
+          <div class="statement-row"><span>Rubriek 1a · omzet (winstmarges excl. btw)</span><b>${euro(v.omzet)}</b></div>
+          <div class="statement-row"><span>Rubriek 1a · btw</span><b>${euro(v.vat)}</b></div>
+          <div class="statement-row"><span>Overige rubrieken</span><b>€ 0</b></div>
+          <div class="statement-row total"><span>Te betalen (rubriek 5)</span><b>${euro(v.vat)}</b></div></div>
+          <p class="muted small-note">In de aangifte vul je hele euro's in. Bij de margeregeling geef je in rubriek 1a de winstmarge zonder btw op en daarnaast de btw. Een negatieve marge (verlies op een horloge) mag je niet aftrekken van andere horloges${v.negatives ? ` — dit kwartaal ${v.negatives}×` : ''}. Btw die jullie zelf betalen op zakelijke kosten (voorbelasting, rubriek 5b) houdt de app nog niet bij: vraag je boekhouder hoe je die meeneemt.</p>
+        </div>
+        <div class="card"><div class="card-head"><h2>Betaling</h2></div><div class="statement">
+          <div class="statement-row"><span>Btw dit kwartaal</span><b>${euro(v.vat)}</b></div>
+          <div class="statement-row"><span>Al afgedragen</span><b>− ${euro(v.paid)}</b></div>
+          <div class="statement-row total"><span>Nog te betalen</span><b class="${v.open > 0.005 ? 'bad' : 'good'}">${euro(Math.max(0, v.open))}</b></div></div>
+          ${v.open > 0.005 && today() > v.to ? `<p><button class="btn primary" data-action="vat-pay" data-y="${yy}" data-q="${q}">Betaling aan Belastingdienst boeken</button></p>` : ''}
+          <p class="muted small-note">Uiterste datum aangifte én betaling: <b>${fdate(v.deadline)}</b> (laatste dag van de maand na het kwartaal). Boek de betaling hier pas als het geld echt is overgemaakt.</p>
+        </div>
+      </section>
+      <section class="card flush"><div class="card-head pad"><h2>Verkochte horloges in K${q} ${yy}</h2></div>
+        ${v.rows.length ? `<table class="table"><thead><tr><th>Datum</th><th>Horloge</th><th class="r">Inkoopprijs</th><th class="r">Verkoopprijs</th><th class="r">Marge</th><th class="r">Marge excl. btw</th><th class="r">Btw</th></tr></thead><tbody>${v.rows.map(r => `<tr data-action="watch" data-id="${r.id}"><td>${fdate(r.date)}</td><td><b>${esc(r.name)}</b></td><td class="r">${euro(r.purchase)}</td><td class="r">${euro(r.sale)}</td><td class="r">${signed(r.margin)}</td><td class="r">${euro(r.marginExcl)}</td><td class="r">${euro(r.vat)}</td></tr>`).join('')}
+          <tr class="sum"><td></td><td><b>Totaal</b></td><td></td><td></td><td></td><td class="r"><b>${euro(v.omzet)}</b></td><td class="r"><b>${euro(v.vat)}</b></td></tr></tbody></table>` : empty('Geen verkopen onder de margeregeling in dit kwartaal.')}
+        ${v.noScheme ? `<p class="muted pad">${v.noScheme} verkocht horloge(s) staan op "Geen btw" en tellen hier niet mee.</p>` : ''}
+      </section>`;
+  },
+
+  tax() {
+    const st = S(), cy = +today().slice(0, 4), y = +(ui.taxYear || cy), t = taxYear(y);
+    const pot = taxPot(st, y), bal = bankBalance(st);
+    const years = [...new Set([cy, cy - 1])];
+    return head('Belastingen', 'Belastingpotje en een indicatie van de inkomstenbelasting per vennoot.', `<select class="period" data-uikey="taxYear">${options(years.map(x => [x, x]), y)}</select>`) + `
+      <section class="stats">${stat('Belastingpotje', euro(pot.total), 'opzij zetten voor btw + inkomstenbelasting')}${stat('Btw nog af te dragen', euro(pot.vat), '', 'data-go="financien/vat"')}${stat(`Reserve inkomstenbelasting ${y}`, euro(pot.ib), `${pot.perPartner[0]?.reservePct ?? 35}% van de belastbare winst`)}${stat('Vrij besteedbaar', signed(bal - pot.total), 'banksaldo min belastingpotje')}</section>
+      <section class="cols">${pot.perPartner.map(p => `<div class="card"><div class="card-head"><h2>${esc(p.partner)}</h2><span class="badge">${y}</span></div><div class="statement">
+        <div class="statement-row"><span>Winstaandeel</span><b>${signed(p.profit)}</b></div>
+        <div class="statement-row"><span>Uren (urencriterium ${t.hours})</span><b class="${p.meetsHours ? 'good' : ''}">${Math.round(p.hours)} uur ${p.meetsHours ? '✓' : ''}</b></div>
+        ${progress(p.hours, t.hours)}
+        <div class="statement-row"><span>Zelfstandigenaftrek ${p.meetsHours ? '' : '(alleen met urencriterium)'}</span><b>− ${euro(p.selfEmployed)}</b></div>
+        <div class="statement-row"><span>Startersaftrek</span><b>− ${euro(p.starter)}</b></div>
+        <div class="statement-row"><span>Mkb-winstvrijstelling (${t.mkb}%)</span><b>− ${euro(p.mkb)}</b></div>
+        <div class="statement-row sub"><span>Belastbare winst</span><b>${euro(p.taxable)}</b></div>
+        <div class="statement-row total"><span>Reserve (${p.reservePct}%)</span><b>${euro(p.reserve)}</b></div></div></div>`).join('')}</section>
+      <section class="card"><div class="card-head"><h2>Goed om te weten</h2></div><ul class="plain">
+        <li>In een vof doet ieder van jullie <b>zelf</b> aangifte inkomstenbelasting over het eigen winstaandeel.</li>
+        <li>Bedragen ${y}: zelfstandigenaftrek ${euro(t.selfEmployed)}, startersaftrek ${euro(t.starter)} (alleen met recht op zelfstandigenaftrek, maximaal 3× in de eerste 5 jaar), mkb-winstvrijstelling ${t.mkb}% (ook zonder urencriterium).</li>
+        <li>Urencriterium: minimaal ${t.hours} uur per jaar per persoon. Schrijf je uren bij in <a class="link" data-go="taken/hours">Taken → Uren</a>.</li>
+        <li>Dit is een <b>indicatie</b>: ander inkomen, heffingskortingen, de inkomensafhankelijke bijdrage Zvw en de werkelijke tarieven zijn niet meegerekend. Pas het reservepercentage aan bij Instellingen en laat de aangifte controleren door een boekhouder.</li>
+      </ul></section>`;
+  },
+
+  hours() {
+    const all = items('hours'), y = +today().slice(0, 4), f = ui.hoursPerson, t = taxYear(y);
+    const totals = hoursByPerson(S().items || [], y);
+    const list = all.filter(h => f === 'all' || h.person === f).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const daysIn = daysBetween(`${y}-01-01`, today()) + 1, pace = Math.round(t.hours * daysIn / 365);
+    return head('Uren', `Urenregistratie ${y} voor het urencriterium (${t.hours} uur per persoon).`, '<button class="btn primary" data-action="hours-add">＋ Uren</button>') + itemsBanner() + `
+      <section class="cols">${partners().map(p => `<div class="card"><div class="card-head"><h2>${esc(p)}</h2><b>${Math.round(totals[p] || 0)} / ${t.hours} uur</b></div>${progress(totals[p] || 0, t.hours)}<p class="muted small-note">${(totals[p] || 0) >= pace ? 'Op schema' : `Achter op schema: rond deze datum zou je op ±${pace} uur moeten zitten`}.</p></div>`).join('')}</section>
+      <div class="toolbar">${tabsHtml('hoursPerson', [['all', 'Iedereen'], ...partners().map(p => [p, p])])}</div>
+      ${list.length ? `<div class="card flush"><table class="table"><thead><tr><th>Datum</th><th>Wie</th><th>Soort werk</th><th>Omschrijving</th><th class="r">Uren</th></tr></thead><tbody>${list.slice(0, 300).map(h => `<tr data-action="edit-hours" data-id="${h.id}"><td>${fdate(h.date)}</td><td>${esc(h.person)}</td><td>${esc(h.activity)}</td><td>${esc(h.note || '')}</td><td class="r"><b>${String(h.hours).replace('.', ',')}</b></td></tr>`).join('')}</tbody></table></div>` : empty('Nog geen uren geschreven.', '<button class="btn primary" data-action="hours-add">＋ Eerste uren</button>')}`;
+  },
+
+  'mk-stats'() {
+    const posts = items('post').filter(p => p.status === 'posted');
+    const eng = p => n(p.likes) + n(p.comments) + n(p.saves);
+    const byCh = CHANNELS.map(c => { const l = posts.filter(p => p.channel === c); return { c, count: l.length, views: l.reduce((a, p) => a + n(p.views), 0), eng: l.reduce((a, p) => a + eng(p), 0) }; }).filter(x => x.count);
+    const top = [...posts].sort((a, b) => eng(b) - eng(a) || n(b.views) - n(a.views)).slice(0, 10);
+    const sold = new Set(S().watches.filter(w => w.status === 'sold').map(w => w.id));
+    const withWatch = posts.filter(p => p.watch_id), soldAfter = withWatch.filter(p => sold.has(p.watch_id)).length;
+    return head('Statistieken', 'Resultaten van geplaatste posts. Vul weergaven en likes in bij de post (status Gepost).') + itemsBanner() + `
+      <section class="stats">${stat('Geplaatste posts', posts.length)}${stat('Weergaven', posts.reduce((a, p) => a + n(p.views), 0).toLocaleString('nl-NL'))}${stat('Interacties', posts.reduce((a, p) => a + eng(p), 0).toLocaleString('nl-NL'), 'likes + reacties + bewaard')}${stat('Horloge daarna verkocht', withWatch.length ? `${soldAfter} / ${withWatch.length}` : '—', 'posts met een gekoppeld horloge')}</section>
+      <section class="cols">
+        <div class="card"><div class="card-head"><h2>Per kanaal</h2></div>${byCh.length ? `<table class="table compact"><thead><tr><th>Kanaal</th><th class="r">Posts</th><th class="r">Weergaven</th><th class="r">Interacties</th><th class="r">Gem. per post</th></tr></thead><tbody>${byCh.map(x => `<tr><td>${x.c}</td><td class="r">${x.count}</td><td class="r">${x.views.toLocaleString('nl-NL')}</td><td class="r">${x.eng.toLocaleString('nl-NL')}</td><td class="r">${Math.round(x.eng / x.count)}</td></tr>`).join('')}</tbody></table>` : empty('Nog geen geplaatste posts.')}</div>
+        <div class="card"><div class="card-head"><h2>Beste posts</h2></div>${top.length ? `<ul class="list">${top.map(p => `<li data-action="edit-post" data-id="${p.id}"><div><b>${esc(p.title)}</b><small>${esc(p.channel)} · ${fdate(p.date)} · ${n(p.views).toLocaleString('nl-NL')} weergaven</small></div><span>${eng(p)} ♥</span></li>`).join('')}</ul>` : empty('Nog geen resultaten ingevuld.')}</div>
+      </section>`;
+  },
+
+  inbox() {
+    const all = items('mail'), f = ui.mailFilter;
+    const list = all.filter(m => (m.status || 'new') === f || f === 'all').sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    const cnt = s => all.filter(m => (m.status || 'new') === s).length;
+    const ready = integ?.gmail?.connected;
+    return head('Mail', 'Bonnen en bevestigingen uit Gmail. Koppel ze aan een inkoop of uitgave.') + itemsBanner() + `
+      ${!ready ? `<div class="banner">Gmail is nog niet gekoppeld. Dat doe je bij <a class="link" data-go="instellingen/settings">Instellingen → Koppelingen</a>.</div>` : ''}
+      <div class="toolbar">${tabsHtml('mailFilter', [['new', 'Nieuw', cnt('new')], ['linked', 'Gekoppeld', cnt('linked')], ['ignored', 'Genegeerd', cnt('ignored')], ['all', 'Alles', all.length]])}</div>
+      ${list.length ? `<div class="mail-list">${list.map(m => `<article class="card mail"><div class="card-head"><div><b>${esc(m.subject || '(geen onderwerp)')}</b><br><small class="muted">${esc(m.from || '')} · ${fdate(String(m.date).slice(0, 10))}</small></div>${m.amounts?.length ? `<span class="badge">${m.amounts.slice(0, 3).map(a => euro(a)).join(' · ')}</span>` : ''}</div>
+        ${m.snippet ? `<p class="muted mail-snippet">${esc(m.snippet)}</p>` : ''}
+        <div class="linked">${mailFiles(m).map(a => `<button class="chip" data-action="file" data-path="${esc(a.path)}">📎 ${esc(a.name)}</button>`).join('')}</div>
+        <div class="row-actions mail-actions">${(m.status || 'new') === 'new' ? `<button class="btn small primary" data-action="mail-link" data-id="${m.id}">Koppelen als bon</button><button class="btn small" data-action="mail-ignore" data-id="${m.id}">Negeren</button>` : `<span class="chip">${m.status === 'linked' ? '✓ Gekoppeld' : 'Genegeerd'}</span><button class="btn small ghost" data-action="mail-reset" data-id="${m.id}">Terugzetten</button>`}</div></article>`).join('')}</div>` : empty(ready ? 'Geen mails in deze lijst.' : 'Nog geen mails binnengekomen.')}`;
+  },
+});
+
 // ───────────── Klikken ─────────────
 document.addEventListener('click', async e => {
   const nav = e.target.closest('[data-page],[data-go]');
@@ -1314,6 +1558,16 @@ document.addEventListener('click', async e => {
   try {
     switch (a.dataset.action) {
       case 'purchase': purchaseForm(); break;
+      case 'hours-add': hoursForm(); break;
+      case 'edit-hours': hoursForm(id); break;
+      case 'vat-pay': { const v = vatReturn(S(), +a.dataset.y, +a.dataset.q); bankEntryForm({ type: 'vat_payment', amount: v.open, description: `Btw-afdracht K${v.q} ${v.year}`, reference_id: vatRef(v.year, v.q) }); break; }
+      case 'mail-link': linkMailForm(id); break;
+      case 'mail-ignore': await saveItem('mail', id, { status: 'ignored' }); render(); break;
+      case 'mail-reset': await saveItem('mail', id, { status: 'new' }); render(); break;
+      case 'gmail-setup': await gmailSetup(); break;
+      case 'onedrive-connect': { const r = await store.invoke('lumar-integrations', { action: 'onedrive-connect' }); location.href = r.url; break; }
+      case 'onedrive-sync': { toast('Bezig met synchroniseren…'); let total = 0; for (let i = 0; i < 20; i++) { const r = await store.invoke('lumar-integrations', { action: 'onedrive-sync' }); total += r.uploaded || 0; if (!r.remaining) break; } toast(`OneDrive bijgewerkt: ${total} bestand(en)`); break; }
+      case 'integ-disconnect': if (await confirmDialog('Koppeling verbreken?', 'De app stopt met deze koppeling. Bestaande bestanden blijven staan.', 'Ontkoppelen')) { await store.invoke('lumar-integrations', { action: 'disconnect', provider: a.dataset.provider }); await loadIntegrations(); render(); } break;
       case 'task': inDetail?.close(); taskForm(null, a.dataset.watch ? { watch_id: a.dataset.watch, area: 'Verkoop' } : {}); break;
       case 'edit-task': inDetail?.close(); taskForm(id); break;
       case 'task-move': await moveTask(id, +a.dataset.dir); break;
@@ -1369,6 +1623,10 @@ document.addEventListener('click', async e => {
 document.addEventListener('change', async e => {
   const p = e.target.closest('select.period');
   if (p) { ui[p.dataset.uikey] = p.value; render(); return; }
+  const sn = e.target.closest('[data-setting-num]');
+  if (sn) { await store.setSetting(sn.dataset.settingNum, n(sn.value)); toast('Opgeslagen'); render(); return; }
+  const st = e.target.closest('[data-starter]');
+  if (st) { await store.setSetting('starters', { ...(S().settings.starters || {}), [st.dataset.starter]: st.checked }); toast('Opgeslagen'); render(); return; }
   const s = e.target.closest('[data-setting]');
   if (s) { try { await store.setSetting(s.dataset.setting, s.type === 'checkbox' ? s.checked : s.value); toast('Opgeslagen'); render(); } catch (err) { toast(err.message, 'bad'); } }
 });
@@ -1379,7 +1637,12 @@ function showAuth(msg = '') {
 }
 function showApp() {
   $('#auth').hidden = true; $('#app').hidden = false;
+  store.onUploaded = () => scheduleOneDriveSync();
+  const qs = new URLSearchParams(location.search);
+  if (qs.get('connected')) { toast(qs.get('connected') === 'onedrive' ? 'OneDrive is gekoppeld' : 'Gekoppeld'); history.replaceState(null, '', location.pathname + location.hash); }
+  if (qs.get('koppelfout')) { toast('Koppelen mislukt: ' + qs.get('koppelfout'), 'bad'); history.replaceState(null, '', location.pathname + location.hash); }
   go(location.hash.slice(1) || 'home');
+  loadIntegrations().then(() => { if (['settings', 'inbox'].includes(route.page)) render(); });
 }
 
 $('#loginForm').addEventListener('submit', async e => {

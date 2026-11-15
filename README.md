@@ -65,6 +65,14 @@ Staat er iets niet goed, dan zie je dat op het overzicht en op het blokje Financ
 - **Btw-afdracht** boek je via Bank → ＋ Mutatie → Btw-afdracht.
 - **Saldocorrecties** tellen als kasverschil in het resultaat; zoek eerst naar een vergeten boeking.
 
+## Belastingen
+- **Financiën → Btw-aangifte**: per kwartaal wat je invult (rubriek 1a), de deadline, en een knop om de betaling te boeken.
+- **Financiën → Belastingen**: belastingpotje (btw + reserve inkomstenbelasting) en per vennoot een indicatie met zelfstandigenaftrek, startersaftrek en mkb-winstvrijstelling.
+- **Taken → Uren**: urenregistratie voor het urencriterium (1.225 uur per persoon per jaar).
+
+## Koppelingen (OneDrive, Gmail)
+Eenmalig nodig: `update-koppelingen.sql` uitvoeren en de Edge Functions uit `supabase-functions/` deployen. Daarna in de app: Instellingen → Koppelingen.
+
 ## Bestanden
 | Bestand | Inhoud |
 | --- | --- |

@@ -58,6 +58,8 @@ function demoStore() {
       return path;
     },
     async fileUrl(path) { return files()[path] || null; },
+    async invoke() { throw new Error('Koppelingen werken alleen met de gedeelde database (niet in demomodus).'); },
+    async rpc() { return []; },
     async resetDemo() { state = emptyState(); this.state = state; persist(); localStorage.removeItem(FILES); },
   };
 }
@@ -146,8 +148,19 @@ async function cloudStore(config, onRemoteChange) {
       const ext = (blob.type.split('/')[1] || 'bin').replace('jpeg', 'jpg');
       const path = `${folder}/${uuid()}.${ext}`;
       check(await sb.storage.from(BUCKET).upload(path, blob, { contentType: blob.type, upsert: false }));
+      store.onUploaded?.(path);
       return path;
     },
+    async invoke(name, body = {}) {
+      const { data, error } = await sb.functions.invoke(name, { body });
+      if (error) {
+        let msg = error.message;
+        try { const j = await error.context?.json?.(); if (j?.error) msg = j.error; } catch { /* geen json */ }
+        const e = new Error(msg); e.code = error.context?.status; throw e;
+      }
+      return data;
+    },
+    async rpc(name, args) { return check(await sb.rpc(name, args)); },
     async fileUrl(path) {
       if (!path) return null;
       const c = urlCache.get(path); if (c && c.until > Date.now()) return c.url;
