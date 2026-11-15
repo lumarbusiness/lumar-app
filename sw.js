@@ -1,5 +1,5 @@
 // LUMAR service worker: app-bestanden offline beschikbaar, altijd eerst de nieuwste versie proberen.
-const CACHE = 'lumar-v11';
+const CACHE = 'lumar-v12';
 const SHELL = ['./', './index.html', './styles.css', './app.js', './logic.js', './store.js', './config.js', './manifest.webmanifest', './icon.svg', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });

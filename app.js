@@ -945,7 +945,6 @@ const moduleOf = p => Object.keys(MODULES).find(m => MODULES[m].pages.some(([k])
 const meHtml = () => `<div class="me" data-go="instellingen" title="Instellingen"><span class="avatar">${esc(store.user.name[0])}</span><div><b>${esc(store.user.name)}</b><small>${store.mode === 'demo' ? 'Demomodus' : 'Verbonden'}</small></div></div>`;
 function sidebarHtml() {
   const home = route.mod === 'home', m = MODULES[route.mod];
-  const quick = home ? [] : m.quick;
   return `<a class="wordmark small" data-go="home">LUMAR<span>Watches</span></a>
     <nav id="nav">
       <a data-go="home" class="app ${home ? 'on' : ''}"><span class="app-ico">${icon('apps')}</span><span>Start</span></a>
@@ -955,7 +954,7 @@ function sidebarHtml() {
         ${open ? `<div class="sub">${mod.pages.map(([pk, l]) => `<a data-go="${k}/${pk}" class="${pk === route.page ? 'on' : ''}">${l}</a>`).join('')}</div>` : ''}`;
       }).join('')}
     </nav>
-    <div class="sidebar-foot">${quick.length ? `<div class="quick">${quick.map(([a, l, c]) => `<button class="btn wide ${c || ''}" data-action="${a}">${l}</button>`).join('')}</div>` : ''}${meHtml()}</div>`;
+    <div class="sidebar-foot">${meHtml()}</div>`;
 }
 
 // Gegevens van Taken, Ideeën, Marketing en Branding
