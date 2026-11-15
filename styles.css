@@ -322,12 +322,19 @@ ul.plain { margin: 0; padding-left: 18px; display: grid; gap: 6px; color: var(--
 .btn[disabled] { opacity: .45; cursor: not-allowed; }
 ol.steps { margin: 0 0 12px; padding-left: 20px; display: grid; gap: 6px; }
 textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; background: #faf7f0; }
-.mail-list { display: grid; gap: 12px; }
-.mail { margin: 0; }
-.mail-snippet { font-size: 13px; margin: 0 0 10px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.mail-actions { margin-top: 10px; }
-.mail { cursor: pointer; } .mail:hover { border-color: var(--gold-2); }
-.mail-body { white-space: pre-wrap; font: 13px/1.55 var(--sans); background: #faf7f0; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; max-height: 50vh; overflow: auto; margin: 14px 0 0; }
+.mail-list { padding: 0; }
+.mail-row { display: grid; grid-template-columns: 200px minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--line); cursor: pointer; min-width: 0; }
+.mail-row:last-child { border-bottom: 0; }
+.mail-row:hover { background: #faf7f0; }
+.mail-row.done { opacity: .6; }
+.mail-from { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mail-main { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.mail-main b { font-weight: 600; }
+.mail-meta { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
+.mail-meta small { color: var(--muted); min-width: 78px; text-align: right; }
+.mail-body { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.55 var(--sans); background: #faf7f0; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; max-height: 50vh; overflow: auto; margin: 14px 0 0; }
+.modal h2, .modal .eyebrow { overflow-wrap: anywhere; }
+@media (max-width: 860px) { .mail-row { grid-template-columns: minmax(0, 1fr); gap: 4px; } }
 .field.inline { max-width: 360px; margin-bottom: 8px; }
 
 /* Smallere schermen */
@@ -345,3 +352,5 @@ textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, mono
   .batch-row { grid-template-columns: 1fr 1fr; } .batch-no { display: none; }
   .table { font-size: 13px; } .card.flush { overflow-x: auto; }
 }
+.cols > *, .stats > *, .card { min-width: 0; }
+.card p, .card li, .card td { overflow-wrap: anywhere; }

@@ -1441,16 +1441,29 @@ async function gmailSetup() {
 
 // Mail-inbox: bijlagen koppelen als bon
 const mailFiles = m => [...(m.attachments || []), ...(m.body_path ? [{ path: m.body_path, name: 'E-mail (tekst)', mime: 'text/plain' }] : [])];
+// Mailtekst leesbaar maken: geen lange links, geen [image: …]-plaatshouders
+function cleanMail(text, oneLine = false) {
+  let t = String(text || '')
+    .replace(/\[image:[^\]]*\]/gi, '')
+    .replace(/<\s*(?:https?:\/\/|mailto:)[^>]*>/gi, '')
+    .replace(/(?:https?:\/\/|www\.)\S+/gi, '')
+    .replace(/\(\s*\)/g, '')
+    .replace(/[ \t]+/g, ' ');
+  if (oneLine) return t.replace(/\s+/g, ' ').trim();
+  return t.split('\n').map(l => l.trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+const mailSender = from => { const m = String(from || '').match(/^\s*"?([^"<]+?)"?\s*</); return (m ? m[1] : String(from || '')).trim(); };
+
 async function openMail(id) {
   const m = itemById(id);
   const files = mailFiles(m).filter(f => f.mime !== 'text/plain');
   const dlg = openDialog(`<div class="modal-body wide"><header><div><div class="eyebrow">${esc(m.from || '')}</div><h2>${esc(m.subject || '(geen onderwerp)')}</h2><small class="muted">${new Date(m.date).toLocaleString('nl-NL', { dateStyle: 'long', timeStyle: 'short' })}</small></div><button class="x" data-close>×</button></header>
     ${m.amounts?.length ? `<div class="linked">${m.amounts.map(a => `<span class="chip">${euro(a)}</span>`).join('')}</div>` : ''}
     ${files.length ? `<div class="linked" style="margin-top:8px">${files.map(a => `<button class="chip" data-action="file" data-path="${esc(a.path)}">📎 ${esc(a.name)}</button>`).join('')}</div>` : ''}
-    <pre class="mail-body">${esc(m.snippet || '')}…</pre>
+    <pre class="mail-body">${esc(cleanMail(m.snippet))}…</pre>
     <footer class="actions">${(m.status || 'new') === 'new' ? `<button class="btn primary" data-action="mail-link" data-id="${id}">Koppelen als bon</button><button class="btn" data-action="mail-expense" data-id="${id}">Nieuwe uitgave</button><button class="btn" data-action="mail-ignore" data-id="${id}">Negeren</button>` : `<span class="chip">${m.status === 'linked' ? '✓ Gekoppeld' : 'Genegeerd'}</span>`}</footer></div>`, 'detail');
   if (m.body_path) {
-    try { const url = await store.fileUrl(m.body_path); const txt = url.startsWith('data:') ? atob(url.split(',')[1]) : await (await fetch(url)).text(); $('.mail-body', dlg).textContent = txt.replace(/^Van:.*\n.*\n.*\n\n/, ''); }
+    try { const url = await store.fileUrl(m.body_path); const txt = url.startsWith('data:') ? atob(url.split(',')[1]) : await (await fetch(url)).text(); $('.mail-body', dlg).textContent = cleanMail(txt.replace(/^Van:.*\n.*\n.*\n\n/, '')); }
     catch { /* laat het fragment staan */ }
   }
 }
@@ -1575,10 +1588,11 @@ Object.assign(pages, {
     return head('Mail', 'Bonnen en bevestigingen uit Gmail. Koppel ze aan een inkoop of uitgave.') + itemsBanner() + `
       ${!ready ? `<div class="banner">Gmail is nog niet gekoppeld. Dat doe je bij <a class="link" data-go="instellingen/settings">Instellingen → Koppelingen</a>.</div>` : ''}
       <div class="toolbar"><input class="search" id="mailSearch" placeholder="Zoek op onderwerp, afzender of tekst…" value="${esc(ui.mailSearch || '')}">${tabsHtml('mailFilter', [['new', 'Nieuw', cnt('new')], ['linked', 'Gekoppeld', cnt('linked')], ['ignored', 'Genegeerd', cnt('ignored')], ['all', 'Alles', all.length]])}</div>
-      ${list.length ? `<div class="mail-list">${list.slice(0, 150).map(m => `<article class="card mail" data-action="mail-open" data-id="${m.id}"><div class="card-head"><div><b>${esc(m.subject || '(geen onderwerp)')}</b><br><small class="muted">${esc(m.from || '')} · ${fdate(String(m.date).slice(0, 10))}</small></div>${m.amounts?.length ? `<span class="badge">${m.amounts.slice(0, 3).map(a => euro(a)).join(' · ')}</span>` : ''}</div>
-        ${m.snippet ? `<p class="muted mail-snippet">${esc(m.snippet)}</p>` : ''}
-        <div class="linked">${mailFiles(m).map(a => `<button class="chip" data-action="file" data-path="${esc(a.path)}">📎 ${esc(a.name)}</button>`).join('')}</div>
-        <div class="row-actions mail-actions">${(m.status || 'new') === 'new' ? `<button class="btn small primary" data-action="mail-link" data-id="${m.id}">Koppelen als bon</button><button class="btn small" data-action="mail-expense" data-id="${m.id}">Nieuwe uitgave</button><button class="btn small" data-action="mail-ignore" data-id="${m.id}">Negeren</button>` : `<span class="chip">${m.status === 'linked' ? '✓ Gekoppeld' : 'Genegeerd'}</span><button class="btn small ghost" data-action="mail-reset" data-id="${m.id}">Terugzetten</button>`}</div></article>`).join('')}</div>` : empty(ready ? 'Geen mails in deze lijst.' : 'Nog geen mails binnengekomen.')}`;
+      ${list.length ? `<div class="card flush mail-list">${list.slice(0, 200).map(m => `<div class="mail-row ${(m.status || 'new') !== 'new' ? 'done' : ''}" data-action="mail-open" data-id="${m.id}">
+          <div class="mail-from">${esc(mailSender(m.from))}</div>
+          <div class="mail-main"><b>${esc(m.subject || '(geen onderwerp)')}</b> <span class="muted">— ${esc(cleanMail(m.snippet, true).slice(0, 160))}</span></div>
+          <div class="mail-meta">${mailFiles(m).some(f => f.mime !== 'text/plain') ? '<span title="Bijlage">📎</span>' : ''}${m.amounts?.length ? `<span class="badge">${euro(m.amounts[0])}</span>` : ''}${m.status === 'linked' ? '<span class="chip ps-posted">gekoppeld</span>' : ''}<small>${fdate(String(m.date).slice(0, 10))}</small></div>
+        </div>`).join('')}</div>${list.length > 200 ? '<p class="muted">De nieuwste 200 worden getoond. Gebruik de zoekbalk om oudere mails te vinden.</p>' : ''}` : empty(ready ? 'Geen mails in deze lijst.' : 'Nog geen mails binnengekomen.')}`;
   },
 });
 
