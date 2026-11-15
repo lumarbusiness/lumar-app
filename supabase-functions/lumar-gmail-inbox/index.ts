@@ -1,5 +1,5 @@
 // LUMAR – ontvangt mails vanuit het Google Apps Script en zet ze in Documenten → Mail.
-import { admin, cors, json, sha256, safeName, BUCKET } from '../_shared/common.ts';
+import { admin, cors, json, sha256, BUCKET } from '../_shared/common.ts';
 
 const MIME_OK = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'text/plain'];
 const amountsIn = (text: string) => [...new Set([...String(text).matchAll(/€\s?(\d{1,3}(?:\.\d{3})*(?:,\d{2})|\d+(?:,\d{2})?)|(\d{1,3}(?:\.\d{3})*,\d{2})\s?(?:EUR|€)/g)]
@@ -19,16 +19,16 @@ Deno.serve(async req => {
       if (!m?.id) continue;
       const { data: exists } = await db.from('items').select('id').eq('module', 'mail').eq('data->>gmail_id', m.id).maybeSingle();
       if (exists) { skipped++; continue; }
-      const base = `mail/${safeName(m.id)}`;
-      const attachments = [];
+      const base = `mail/${String(m.id).replace(/[^A-Za-z0-9_-]/g, '')}`;
+      const attachments: { path: string; name: string; mime: string }[] = [];
       for (const a of (m.attachments || []).slice(0, 10)) {
         const mime = String(a.mime || '').split(';')[0].toLowerCase();
         if (!MIME_OK.includes(mime) || !a.base64) continue;
-        const path = `${base}/${crypto.randomUUID()}-${safeName(a.name)}`;
+        const path = `${base}/${crypto.randomUUID()}-${String(a.name || 'bijlage').replace(/[^A-Za-z0-9._-]+/g, '_').slice(-80)}`;
         const { error } = await db.storage.from(BUCKET).upload(path, b64(a.base64), { contentType: mime });
         if (!error) attachments.push({ path, name: a.name, mime });
       }
-      let body_path = null;
+      let body_path: string | null = null;
       if (m.body) {
         const text = `Van: ${m.from}\nDatum: ${m.date}\nOnderwerp: ${m.subject}\n\n${m.body}`;
         const path = `${base}/mail.txt`;
