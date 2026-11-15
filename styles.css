@@ -198,7 +198,9 @@ label { display: block; }
 .batch-no { color: var(--muted); font-weight: 600; text-align: center; }
 .b-alloc { font-size: 11px; white-space: nowrap; }
 .batch-sum { margin-top: 10px; font-size: 13px; }
-.detail-grid { display: grid; grid-template-columns: 280px 1fr; gap: 26px; }
+.detail-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 26px; }
+.detail-grid > * { min-width: 0; }
+.detail-grid li, .detail-grid .kv b { overflow-wrap: anywhere; }
 .detail-grid h3:first-child { margin-top: 0; }
 .kv { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px dashed var(--line); }
 .kv span { color: var(--muted); } .kv b { font-weight: 500; text-align: right; }
@@ -270,7 +272,7 @@ label { display: block; }
 .pr-high { background: #f5e0db; color: var(--bad); } .pr-low { background: #eee9df; color: var(--muted); }
 .ps-idea { background: #eee9df; color: var(--muted); } .ps-prep { background: #f6e6c8; color: var(--warn); } .ps-planned { background: #e3ebf5; color: var(--blue); } .ps-posted { background: #e2f0e6; color: var(--good); }
 .linked { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.linked .chip { border: 0; cursor: pointer; font: inherit; font-size: 11px; font-weight: 600; }
+.linked .chip { border: 0; cursor: pointer; font: inherit; font-size: 11px; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 
 /* Kalender */
 .cap { text-transform: capitalize; }
@@ -348,12 +350,13 @@ textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, mono
   .sidebar nav { display: flex; gap: 2px; }
   .sidebar nav a { flex-direction: column; gap: 2px; font-size: 11px; padding: 6px 10px; }
   .main { padding: 20px 16px 40px; }
-  .modal .grid, .detail-grid { grid-template-columns: 1fr; }
+  .modal .grid, .detail-grid { grid-template-columns: minmax(0, 1fr); }
   .batch-row { grid-template-columns: 1fr 1fr; } .batch-no { display: none; }
   .table { font-size: 13px; } .card.flush { overflow-x: auto; }
 }
 .cols > *, .stats > *, .card { min-width: 0; }
-.card p, .card li, .card td { overflow-wrap: anywhere; }
+.card p, .card li { overflow-wrap: anywhere; }
+.card td { overflow-wrap: break-word; }
 
 /* Zijbalk met alle apps */
 .sidebar { overflow: hidden; }

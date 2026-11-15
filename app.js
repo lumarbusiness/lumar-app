@@ -548,6 +548,7 @@ async function deleteWatch(id) {
   for (const e of linked) { await removeBankRef(`expense:${e.id}`); await store.remove('expenses', e.id); }
   for (const e of S().expenses.filter(e => e.watch_id === id)) await store.update('expenses', e.id, { watch_id: null });
   await store.remove('watches', id);
+  for (const it of S().items.filter(x => x.data?.watch_id === id)) await saveItem(it.module, it.id, { watch_id: null });
   if (w.batch_id) await syncBatch(w.batch_id);
   $('dialog.detail')?.close(); toast('Verwijderd'); render();
 }
@@ -974,7 +975,7 @@ async function deleteItem(id, label) {
   await store.remove('items', id); toast('Verwijderd'); return true;
 }
 const itemsBanner = () => store.itemsMissing ? '<div class="banner">Dit onderdeel heeft een kleine database-update nodig: voer <b>update-modules.sql</b> één keer uit in Supabase → SQL Editor.</div>' : '';
-const watchOptions = () => [['', '—'], ...S().watches.filter(w => w.status !== 'written_off').map(w => [w.id, `${wname(w)}${w.reference ? ' · ' + w.reference : ''} · ${STATUS[w.status]}`])];
+const watchOptions = (cur = '') => [['', '—'], ...S().watches.filter(w => w.status !== 'written_off' || w.id === cur).map(w => [w.id, `${wname(w)}${w.reference ? ' · ' + w.reference : ''} · ${STATUS[w.status]}`])];
 const addDays = (d, k) => { const x = new Date(d + 'T12:00'); x.setDate(x.getDate() + k); return x.toISOString().slice(0, 10); };
 const avatar = name => `<span class="avatar xs" title="${esc(name)}">${esc((name || '?')[0])}</span>`;
 const longDate = () => { const t = new Date().toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }); return t[0].toUpperCase() + t.slice(1); };
@@ -1001,7 +1002,7 @@ function taskForm(id, preset = {}) {
       { name: 'status', label: 'Status', type: 'select', options: TASK_STATUS, value: t.status },
       { name: 'priority', label: 'Prioriteit', type: 'select', options: PRIO, value: t.priority },
       { name: 'area', label: 'Onderdeel', type: 'select', options: AREAS, value: t.area },
-      { name: 'watch_id', label: 'Horloge (optioneel)', type: 'select', options: watchOptions(), value: t.watch_id },
+      { name: 'watch_id', label: 'Horloge (optioneel)', type: 'select', options: watchOptions(t.watch_id), value: t.watch_id },
       { name: 'notes', label: 'Toelichting', type: 'textarea', wide: true, value: t.notes },
     ],
     onSubmit: async d => { await saveItem('task', id, { ...d, done_at: d.status === 'done' ? (t.done_at || today()) : null }); toast('Taak opgeslagen'); },
@@ -1069,7 +1070,7 @@ function postForm(id, preset = {}) {
       { name: 'date', label: 'Datum', type: 'date', value: p.date },
       { name: 'time', label: 'Tijd', type: 'time', value: p.time },
       { name: 'owner', label: 'Wie', type: 'select', options: [...partners(), 'Samen'], value: p.owner },
-      { name: 'watch_id', label: 'Horloge', type: 'select', options: watchOptions(), value: p.watch_id },
+      { name: 'watch_id', label: 'Horloge', type: 'select', options: watchOptions(p.watch_id), value: p.watch_id },
       { name: 'caption', label: 'Tekst / caption', type: 'textarea', wide: true, value: p.caption },
       { name: 'media', label: "Foto's / video", type: 'file', multiple: true, wide: true, accept: 'image/jpeg,image/png,image/webp,video/mp4,video/quicktime',
         hint: (p.media?.length ? `Nu ${p.media.length} ${p.media.length === 1 ? 'bestand' : 'bestanden'}. Kies nieuwe om ze te vervangen. ` : '') + "Tot 10 foto's (carrousel) of 1 video, max. 50 MB per bestand." },
@@ -1295,7 +1296,7 @@ function docForm(id, preset = {}) {
       { name: 'category', label: 'Soort', type: 'select', options: DOC_CATS, value: d0.category },
       { name: 'date', label: 'Datum', type: 'date', value: d0.date },
       { name: 'valid_until', label: 'Geldig tot (optioneel)', type: 'date', value: d0.valid_until },
-      { name: 'watch_id', label: 'Hoort bij horloge (optioneel)', type: 'select', options: watchOptions(), value: d0.watch_id },
+      { name: 'watch_id', label: 'Hoort bij horloge (optioneel)', type: 'select', options: watchOptions(d0.watch_id), value: d0.watch_id },
       { name: 'file', label: id ? 'Nieuw bestand (optioneel)' : 'Bestand', type: 'file', accept: 'image/*,application/pdf,.docx,.xlsx' },
       { name: 'notes', label: 'Notities', type: 'textarea', wide: true, value: d0.notes },
     ],
