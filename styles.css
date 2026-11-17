@@ -422,3 +422,5 @@ td.clip { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-spa
 .tt-body b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .tt-body small { font-size: 12px; }
 @media (max-width: 760px) { .tt-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 12px; } }
+.ig-cover { aspect-ratio: 4/5; }
+.ig-kind { position: absolute; right: 8px; top: 8px; background: rgba(20,19,16,.7); color: #fff; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; }

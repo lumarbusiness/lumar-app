@@ -938,7 +938,7 @@ const icon = (k, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill=
 const MODULES = {
   voorraad: { name: 'Voorraad', desc: 'Horloges, inkoop en verkoop', color: '#8a6a35', pages: [['stock', 'Voorraad'], ['sales', 'Verkopen']], quick: [['purchase', '＋ Inkoop', 'primary'], ['sale', '＋ Verkoop']] },
   financien: { name: 'Financiën', desc: 'Resultaat, uitgaven, bank en vennoten', color: '#2f6b4f', pages: [['dashboard', 'Overzicht'], ['expenses', 'Uitgaven'], ['bank', 'Bank'], ['reports', 'Rapportages'], ['partners', 'Vennoten'], ['vat', 'Btw-aangifte'], ['tax', 'Belastingen'], ['check', 'Controle']], quick: [['expense', '＋ Uitgave', 'primary'], ['bank-entry', '＋ Mutatie']] },
-  marketing: { name: 'Marketing', desc: 'Contentkalender en posts', color: '#9a4a3a', pages: [['mk-overview', 'Overzicht'], ['calendar', 'Kalender'], ['posts', 'Alle posts'], ['tiktok', 'TikTok']], quick: [['post', '＋ Post', 'primary']] },
+  marketing: { name: 'Marketing', desc: 'Contentkalender en posts', color: '#9a4a3a', pages: [['mk-overview', 'Overzicht'], ['calendar', 'Kalender'], ['posts', 'Alle posts'], ['instagram', 'Instagram'], ['tiktok', 'TikTok']], quick: [['post', '＋ Post', 'primary']] },
   ideeen: { name: 'Ideeën', desc: 'Ideeënbord en wishlist', color: '#a2802a', pages: [['ideas', 'Ideeënbord'], ['wishlist', 'Wishlist']], quick: [['idea', '＋ Idee', 'primary'], ['wish', '＋ Wens']] },
   taken: { name: 'Taken', desc: 'Wie doet wat, en wanneer', color: '#3c5f8a', pages: [['tasks', 'Takenbord'], ['hours', 'Uren']], quick: [['task', '＋ Taak', 'primary'], ['hours-add', '＋ Uren']] },
   branding: { name: 'Branding', desc: "Kleuren, logo's en vaste teksten", color: '#6b4f8a', pages: [['brand', 'Merkkit']], quick: [] },
@@ -1074,7 +1074,7 @@ function postForm(id, preset = {}) {
       { name: 'caption', label: 'Tekst / caption', type: 'textarea', wide: true, value: p.caption },
       { name: 'media', label: "Foto's / video", type: 'file', multiple: true, wide: true, accept: 'image/jpeg,image/png,image/webp,video/mp4,video/quicktime',
         hint: (p.media?.length ? `Nu ${p.media.length} ${p.media.length === 1 ? 'bestand' : 'bestanden'}. Kies nieuwe om ze te vervangen. ` : '') + "Tot 10 foto's (carrousel) of 1 video, max. 50 MB per bestand." },
-      { name: 'publish_ig', label: 'Nu plaatsen op Instagram', type: 'checkbox', wide: true, show: d => d.channel === 'Instagram' && integ?.instagram?.connected && !p.ig_id },
+      { name: 'publish_ig', label: 'Nu plaatsen op Instagram', type: 'checkbox', wide: true, value: preset.publish_ig, show: d => d.channel === 'Instagram' && integ?.instagram?.connected && !p.ig_id },
       { name: 'send_tt', label: 'Als concept naar TikTok sturen (daarna afmaken en plaatsen in de TikTok-app)', type: 'checkbox', wide: true, value: preset.send_tt, show: d => d.channel === 'TikTok' && integ?.tiktok?.connected },
       { type: 'html', name: 'linked', wide: true, html: p.ig_id || p.tt_id ? `<div class="banner">${p.ig_id ? 'Geplaatst op Instagram' : 'Gekoppeld aan TikTok'}${p.url ? ` · <a class="link" href="${esc(p.url)}" target="_blank" rel="noopener">bekijk post ↗</a>` : ''}. Cijfers worden automatisch bijgewerkt onder Statistieken.</div>` : '' },
       { type: 'section', label: 'Resultaat (na plaatsen)', name: 'stats-head', show: d => d.status === 'posted' },
@@ -1455,7 +1455,7 @@ function settingsIntegrations() {
       ${['instagram', 'tiktok'].map(pv => { const x = integ?.[pv]; const nm = pv === 'instagram' ? 'Instagram' : 'TikTok';
         const txt = pv === 'instagram' ? 'Plaats posts (foto, carrousel of reel) rechtstreeks vanuit Marketing. Volgers, weergaven en likes komen vanzelf binnen onder Marketing → Statistieken.' : 'Stuur video\'s vanuit Marketing als concept naar TikTok; daar kies je geluid en plaats je hem. Volgers en weergaven komen vanzelf binnen onder Marketing → Statistieken.';
         return `<div class="integ-row"><div><b>${nm}</b><p class="muted">${txt}</p>${status(x?.connected, x?.account)}</div>
-        <div class="row-actions">${x?.connected ? `<button class="btn" data-go="marketing/${pv === 'tiktok' ? 'tiktok' : 'mk-overview'}">Bekijken</button><button class="btn ghost danger-text" data-action="integ-disconnect" data-provider="${pv}">Ontkoppelen</button>` : `<button class="btn primary" data-action="social-connect" data-provider="${pv}" ${pending ? 'disabled' : ''}>Koppel ${nm}</button>`}</div></div>`; }).join('')}
+        <div class="row-actions">${x?.connected ? `<button class="btn" data-go="marketing/${pv}">Bekijken</button><button class="btn ghost danger-text" data-action="integ-disconnect" data-provider="${pv}">Ontkoppelen</button>` : `<button class="btn primary" data-action="social-connect" data-provider="${pv}" ${pending ? 'disabled' : ''}>Koppel ${nm}</button>`}</div></div>`; }).join('')}
     </div></section>`;
 }
 
@@ -1647,6 +1647,36 @@ Object.assign(pages, {
       ${list.length ? `<div class="card flush"><table class="table"><thead><tr><th>Datum</th><th>Wie</th><th>Soort werk</th><th>Omschrijving</th><th class="r">Uren</th></tr></thead><tbody>${list.slice(0, 300).map(h => `<tr data-action="edit-hours" data-id="${h.id}"><td>${fdate(h.date)}</td><td>${esc(h.person)}</td><td>${esc(h.activity)}</td><td>${esc(h.note || '')}</td><td class="r"><b>${String(h.hours).replace('.', ',')}</b></td></tr>`).join('')}</tbody></table></div>` : empty('Nog geen uren geschreven.', '<button class="btn primary" data-action="hours-add">＋ Eerste uren</button>')}`;
   },
 
+  instagram() {
+    const con = integ?.instagram?.connected;
+    if (con && !social.data && !social.loading) loadSocial();
+    const btns = `${con ? `<button class="btn" data-action="social-refresh" ${social.loading ? 'disabled' : ''}>${social.loading ? 'Bijwerken…' : '↻ Bijwerken'}</button>` : ''}<button class="btn primary" data-action="ig-new">＋ Nieuwe post</button>`;
+    const intro = 'Jullie Instagram-account: volgers, posts en wat er nog klaarstaat. Plaatsen gaat rechtstreeks vanuit de app; de cijfers worden automatisch opgehaald.';
+    if (!integ) return head('Instagram', intro, btns) + '<div class="banner">Laden…</div>';
+    if (!con) return head('Instagram', intro, btns) + `<div class="banner">Instagram is nog niet gekoppeld. Dat doe je bij <a class="link" data-go="instellingen/settings">Instellingen → Koppelingen</a>.</div>`;
+    const ig = social.data?.instagram, prof = ig?.profile, media = ig?.media || [];
+    const fmt = x => n(x).toLocaleString('nl-NL');
+    const snaps = items('socialstat').filter(x => x.ig_followers != null).sort((a, b) => a.date.localeCompare(b.date));
+    const base = snaps.find(x => x.date >= addDays(today(), -30)) || snaps[0];
+    const growth = prof?.followers_count != null && base && base.date < today() ? `${prof.followers_count - base.ig_followers >= 0 ? '+' : ''}${fmt(prof.followers_count - base.ig_followers)} sinds ${fdate(base.date)}` : 'groei zie je na een paar dagen';
+    const views = media.reduce((a, m) => a + igViews(m), 0), likes = media.reduce((a, m) => a + n(m.like_count), 0);
+    const waiting = items('post').filter(p => p.channel === 'Instagram' && p.status !== 'posted').sort((a, b) => String(a.date || '9').localeCompare(String(b.date || '9')));
+    const postOf = id => items('post').find(p => p.ig_id === id);
+    const kind = m => m.media_product_type === 'REELS' ? 'Reel' : m.media_type === 'CAROUSEL_ALBUM' ? 'Carrousel' : m.media_type === 'VIDEO' ? 'Video' : 'Foto';
+    return head('Instagram', intro, btns) + itemsBanner() +
+      (ig?.error ? `<div class="banner">Instagram gaf een fout: ${esc(ig.error)}</div>` : '') +
+      (!ig && social.loading ? '<div class="banner">Cijfers van Instagram ophalen…</div>' : '') +
+      (prof ? `<section class="stats">${stat(`Volgers · @${esc(prof.username || '')}`, fmt(prof.followers_count), growth)}${stat('Posts', fmt(prof.media_count), 'in totaal op het account')}${stat('Weergaven', fmt(views), `laatste ${media.length} posts`)}${stat('Likes', fmt(likes), `laatste ${media.length} posts`)}</section>` : '') + `
+      <div class="card"><div class="card-head"><h2>Klaar om te plaatsen</h2><small class="muted">${waiting.length}</small></div>
+        ${waiting.length ? `<ul class="list">${waiting.map(p => `<li data-action="edit-post" data-id="${p.id}"><div><b>${esc(p.title)}</b><small>${p.date ? fdate(p.date) : 'geen datum'}${p.watch_id && watchById(p.watch_id) ? ' · ' + esc(wname(watchById(p.watch_id))) : ''}${p.media?.length ? ` · ${p.media.length} ${p.media.length === 1 ? 'bestand' : 'bestanden'}` : ' · nog geen foto of video'}</small></div><span class="chip ps-${p.status}">${postLabel(p.status)}</span></li>`).join('')}</ul>` : `<p class="muted">Niets klaargezet. Klik op <b>＋ Nieuwe post</b>, kies je foto's (tot 10, als carrousel) of een video, schrijf je tekst en vink <b>Nu plaatsen op Instagram</b> aan. Of sla hem op zonder vinkje om later te plaatsen.</p>`}
+      </div>
+      <div class="card flush"><div class="card-head pad"><h2>Posts op Instagram</h2><small class="muted">${social.at ? 'bijgewerkt ' + social.at.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' }) : ''}</small></div>
+        ${media.length ? `<div class="tt-grid ig-grid">${media.map(m => { const p = postOf(m.id); const img = m.media_type === 'VIDEO' ? m.thumbnail_url : m.media_url; return `<a class="tt-card" href="${esc(m.permalink || '#')}" target="_blank" rel="noopener">
+          <div class="tt-cover ig-cover">${img ? `<img src="${esc(img)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ''}<span class="ig-kind">${kind(m)}</span>${m.views != null || m.reach != null ? `<span class="tt-views">▶ ${fmt(igViews(m))}</span>` : ''}</div>
+          <div class="tt-body"><b>${esc((m.caption || kind(m)).split('\n')[0])}</b><small class="muted">${fdate(String(m.timestamp).slice(0, 10))}${p?.watch_id && watchById(p.watch_id) ? ' · ⌚ ' + esc(wname(watchById(p.watch_id))) : ''}</small>
+          <small>♥ ${fmt(m.like_count)} · 💬 ${fmt(m.comments_count)}${m.saved != null ? ` · 🔖 ${fmt(m.saved)}` : ''}</small></div></a>`; }).join('')}</div>` : empty(social.loading ? 'Laden…' : 'Nog geen posts gevonden.')}
+      </div>`;
+  },
   tiktok() {
     const con = integ?.tiktok?.connected;
     if (con && !social.data && !social.loading) loadSocial();
@@ -1712,7 +1742,7 @@ const social = { data: null, loading: false, at: null };
 const igViews = m => n(m.views ?? m.reach);
 async function loadSocial(force = false) {
   if (social.loading || (!force && social.data)) return;
-  social.loading = true; if (route.page === 'tiktok') render();
+  social.loading = true; if (['tiktok', 'instagram'].includes(route.page)) render();
   try {
     const d = await store.invoke('lumar-social', { action: 'stats' });
     social.data = d; social.at = new Date();
@@ -1720,7 +1750,7 @@ async function loadSocial(force = false) {
     if (d.instagram?.error && integ?.instagram?.connected) toast(d.instagram.error, 'bad');
     if (d.tiktok?.error && integ?.tiktok?.connected) toast(d.tiktok.error, 'bad');
   } catch (e) { toast(e.message, 'bad'); }
-  finally { social.loading = false; if (route.page === 'tiktok') render(); }
+  finally { social.loading = false; if (['tiktok', 'instagram'].includes(route.page)) render(); }
 }
 // Werk cijfers van gekoppelde posts bij en bewaar één momentopname per dag (voor de groei)
 async function syncSocialPosts(d) {
@@ -1819,6 +1849,7 @@ document.addEventListener('click', async e => {
       case 'onedrive-sync': { toast('Bezig met synchroniseren…'); let total = 0; for (let i = 0; i < 20; i++) { const r = await store.invoke('lumar-integrations', { action: 'onedrive-sync' }); total += r.uploaded || 0; if (!r.remaining) break; } toast(`OneDrive bijgewerkt: ${total} bestand(en)`); break; }
       case 'social-connect': { const r = await store.invoke('lumar-social', { action: 'connect', provider: a.dataset.provider }); location.href = r.url; break; }
       case 'social-refresh': await loadSocial(true); break;
+      case 'ig-new': postForm(null, { channel: 'Instagram', status: 'prep', date: today() }); break;
       case 'tt-new': postForm(null, { channel: 'TikTok', status: 'prep', date: today(), send_tt: !!integ?.tiktok?.connected }); break;
       case 'integ-disconnect': if (await confirmDialog('Koppeling verbreken?', 'De app stopt met deze koppeling. Bestaande bestanden blijven staan.', 'Ontkoppelen')) { await store.invoke(['instagram', 'tiktok'].includes(a.dataset.provider) ? 'lumar-social' : 'lumar-integrations', { action: 'disconnect', provider: a.dataset.provider }); social.data = null; await loadIntegrations(); render(); } break;
       case 'task': inDetail?.close(); taskForm(null, a.dataset.watch ? { watch_id: a.dataset.watch, area: 'Verkoop' } : {}); break;
@@ -1911,7 +1942,7 @@ function showApp() {
   if (qs.get('connected')) { toast(({ onedrive: 'OneDrive', instagram: 'Instagram', tiktok: 'TikTok' }[qs.get('connected')] || 'Koppeling') + ' is gekoppeld'); history.replaceState(null, '', location.pathname + location.hash); }
   if (qs.get('koppelfout')) { toast('Koppelen mislukt: ' + qs.get('koppelfout'), 'bad'); history.replaceState(null, '', location.pathname + location.hash); }
   go(location.hash.slice(1) || 'home');
-  loadIntegrations().then(() => { if (['settings', 'inbox', 'tiktok'].includes(route.page)) render(); });
+  loadIntegrations().then(() => { if (['settings', 'inbox', 'tiktok', 'instagram'].includes(route.page)) render(); });
   loadTeam().then(() => { if (route.page === 'settings') render(); });
   store.onPresence = () => { if (route.page === 'settings' && !$('#modalRoot').children.length && !document.activeElement?.matches('input,select,textarea')) render(); };
 }
