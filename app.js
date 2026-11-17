@@ -1847,7 +1847,7 @@ document.addEventListener('click', async e => {
       case 'gmail-setup': await gmailSetup(); break;
       case 'onedrive-connect': { const r = await store.invoke('lumar-integrations', { action: 'onedrive-connect' }); location.href = r.url; break; }
       case 'onedrive-sync': { toast('Bezig met synchroniseren…'); let total = 0; for (let i = 0; i < 20; i++) { const r = await store.invoke('lumar-integrations', { action: 'onedrive-sync' }); total += r.uploaded || 0; if (!r.remaining) break; } toast(`OneDrive bijgewerkt: ${total} bestand(en)`); break; }
-      case 'social-connect': { const r = await store.invoke('lumar-social', { action: 'connect', provider: a.dataset.provider }); location.href = r.url; break; }
+      case 'social-connect': { const r = await store.invoke('lumar-social', { action: 'connect', provider: a.dataset.provider }); if (r.url) { location.href = r.url; break; } toast(`Gekoppeld: ${r.account || a.dataset.provider}`); social.data = null; await loadIntegrations(); render(); break; }
       case 'social-refresh': await loadSocial(true); break;
       case 'ig-new': postForm(null, { channel: 'Instagram', status: 'prep', date: today() }); break;
       case 'tt-new': postForm(null, { channel: 'TikTok', status: 'prep', date: today(), send_tt: !!integ?.tiktok?.connected }); break;

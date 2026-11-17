@@ -11,7 +11,7 @@ Deno.serve(async req => {
     const body = await req.json().catch(() => ({}));
     const db = admin();
     switch (body.action) {
-      case 'connect': return json({ url: await connectUrl(db, body.provider, user.id) });
+      case 'connect': { const r = await connectUrl(db, body.provider, user.id); return json(typeof r === 'string' ? { url: r } : r); }
       case 'ig-publish': return json(await igPublish(db, body.paths || [], String(body.caption || '')));
       case 'ig-finish': return json(await igFinish(await igToken(db), body.creation_id));
       case 'tt-draft': return json(await ttDraft(db, body.path));
@@ -41,8 +41,17 @@ Deno.serve(async req => {
 
 async function connectUrl(db: DB, provider: string, userId: string) {
   const nonce = randomToken();
+  if (provider === 'instagram' && Deno.env.get('IG_ACCESS_TOKEN')) {
+    // Meta 'Unified login': vaste system-user-sleutel, geen inlogscherm nodig
+    const token = await igToken(db, true);
+    const p = await ig(token, `/${IG_ME}`, { fields: 'username' });
+    const { error } = await db.from('integrations').upsert({ provider: 'instagram', account: '@' + p.username, access_token: 'env', refresh_token: 'env',
+      expires_at: '2999-12-31T00:00:00Z', connected_by: userId, updated_at: new Date().toISOString() });
+    if (error) throw error;
+    return { connected: true, account: '@' + p.username };
+  }
   if (provider === 'instagram') {
-    if (!Deno.env.get('IG_APP_ID') || !Deno.env.get('IG_APP_SECRET')) throw new HttpError(400, 'Instagram is nog niet ingesteld (IG_APP_ID / IG_APP_SECRET ontbreken in Supabase).');
+    if (!Deno.env.get('IG_APP_ID') || !Deno.env.get('IG_APP_SECRET')) throw new HttpError(400, 'Instagram is nog niet ingesteld (IG_ACCESS_TOKEN ontbreekt in Supabase).');
   } else if (provider === 'tiktok') {
     if (!Deno.env.get('TIKTOK_CLIENT_KEY') || !Deno.env.get('TIKTOK_CLIENT_SECRET')) throw new HttpError(400, 'TikTok is nog niet ingesteld (TIKTOK_CLIENT_KEY / TIKTOK_CLIENT_SECRET ontbreken in Supabase).');
   } else throw new HttpError(400, 'Onbekende koppeling');
@@ -62,7 +71,35 @@ async function getRow(db: DB, provider: string) {
 }
 
 // ───── Instagram ─────
-async function igToken(db: DB) {
+// Twee varianten: Instagram-login (graph.instagram.com, /me) of Meta Unified login met system-user-sleutel (graph.facebook.com, /{ig-id})
+const FB_GRAPH = 'https://graph.facebook.com/v25.0';
+let IG_BASE = IG_GRAPH, IG_ME = 'me';
+let IG_ID_CACHE = '';
+async function igUserId(token: string) {
+  if (Deno.env.get('IG_USER_ID')) return Deno.env.get('IG_USER_ID')!;
+  if (IG_ID_CACHE) return IG_ID_CACHE;
+  return IG_ID_CACHE = await findIgUserId(token);
+}
+async function findIgUserId(token: string) {
+  const get = (path: string) => fetch(`${FB_GRAPH}${path}${path.includes('?') ? '&' : '?'}access_token=${token}`).then(r => r.json()).catch(() => ({}));
+  const a = await get('/me/assigned_instagram_accounts?fields=id,username');
+  if (a?.data?.[0]?.id) return a.data[0].id as string;
+  const d = await get(`/debug_token?input_token=${token}`);
+  const ids = (d?.data?.granular_scopes || []).filter((g: any) => String(g.scope).startsWith('instagram')).flatMap((g: any) => g.target_ids || []);
+  if (ids[0]) return ids[0] as string;
+  const pages = await get('/me/accounts?fields=instagram_business_account');
+  const pid = (pages?.data || []).map((x: any) => x.instagram_business_account?.id).find(Boolean);
+  if (pid) return pid as string;
+  throw new HttpError(400, 'Kon het Instagram-account bij deze sleutel niet vinden. Staat het account aangevinkt bij de configuratie (Assets)?');
+}
+async function igToken(db: DB, skipRow = false) {
+  const env = Deno.env.get('IG_ACCESS_TOKEN');
+  if (env) {
+    if (!skipRow) await getRow(db, 'instagram');
+    IG_BASE = FB_GRAPH; IG_ME = await igUserId(env);
+    return env;
+  }
+  IG_BASE = IG_GRAPH; IG_ME = 'me';
   const row = await getRow(db, 'instagram');
   const left = new Date(row.expires_at).getTime() - Date.now(), age = Date.now() - new Date(row.updated_at).getTime();
   if (left < 0) throw new HttpError(400, 'De Instagram-koppeling is verlopen. Koppel opnieuw bij Instellingen.');
@@ -77,7 +114,7 @@ async function igToken(db: DB) {
 }
 async function ig(token: string, path: string, params: Record<string, string> = {}, method = 'GET') {
   const qs = new URLSearchParams({ ...params, access_token: token });
-  const res = method === 'GET' ? await fetch(`${IG_GRAPH}${path}?${qs}`) : await fetch(`${IG_GRAPH}${path}`, { method, body: qs });
+  const res = method === 'GET' ? await fetch(`${IG_BASE}${path}?${qs}`) : await fetch(`${IG_BASE}${path}`, { method, body: qs });
   const d = await res.json();
   if (!res.ok || d.error) throw new HttpError(400, 'Instagram: ' + (d.error?.error_user_msg || d.error?.message || res.statusText));
   return d;
@@ -105,15 +142,15 @@ async function igPublish(db: DB, paths: string[], caption: string) {
   let creation: string;
   if (paths.length === 1) {
     const url = await signed(db, paths[0]);
-    creation = (await ig(token, '/me/media', isVideo(paths[0]) ? { media_type: 'REELS', video_url: url, caption } : { image_url: url, caption }, 'POST')).id;
+    creation = (await ig(token, `/${IG_ME}/media`, isVideo(paths[0]) ? { media_type: 'REELS', video_url: url, caption } : { image_url: url, caption }, 'POST')).id;
   } else {
     const kids: string[] = [];
     for (const p of paths) {
       const url = await signed(db, p);
-      kids.push((await ig(token, '/me/media', isVideo(p) ? { media_type: 'VIDEO', video_url: url, is_carousel_item: 'true' } : { image_url: url, is_carousel_item: 'true' }, 'POST')).id);
+      kids.push((await ig(token, `/${IG_ME}/media`, isVideo(p) ? { media_type: 'VIDEO', video_url: url, is_carousel_item: 'true' } : { image_url: url, is_carousel_item: 'true' }, 'POST')).id);
     }
     for (const k of kids) if (!await waitReady(token, k, 60e3)) return { pending: true, creation_id: null, note: 'Video wordt nog verwerkt, probeer het zo opnieuw' };
-    creation = (await ig(token, '/me/media', { media_type: 'CAROUSEL', children: kids.join(','), caption }, 'POST')).id;
+    creation = (await ig(token, `/${IG_ME}/media`, { media_type: 'CAROUSEL', children: kids.join(','), caption }, 'POST')).id;
   }
   if (!await waitReady(token, creation, 100e3)) return { pending: true, creation_id: creation };
   return await igFinish(token, creation);
@@ -121,14 +158,14 @@ async function igPublish(db: DB, paths: string[], caption: string) {
 async function igFinish(token: string, creation: string) {
   if (!creation) throw new HttpError(400, 'Geen post om af te ronden');
   if (!await waitReady(token, creation, 20e3)) return { pending: true, creation_id: creation };
-  const pub = await ig(token, '/me/media_publish', { creation_id: creation }, 'POST');
+  const pub = await ig(token, `/${IG_ME}/media_publish`, { creation_id: creation }, 'POST');
   const m = await ig(token, `/${pub.id}`, { fields: 'id,permalink,timestamp' }).catch(() => ({ id: pub.id }));
   return { id: pub.id, permalink: m.permalink || null };
 }
 async function igStats(db: DB) {
   const token = await igToken(db);
-  const profile = await ig(token, '/me', { fields: 'user_id,username,name,profile_picture_url,followers_count,follows_count,media_count' });
-  const media = (await ig(token, '/me/media', { fields: 'id,caption,media_type,media_product_type,permalink,timestamp,thumbnail_url,media_url,like_count,comments_count', limit: '30' })).data || [];
+  const profile = await ig(token, `/${IG_ME}`, { fields: 'id,username,name,profile_picture_url,followers_count,follows_count,media_count' });
+  const media = (await ig(token, `/${IG_ME}/media`, { fields: 'id,caption,media_type,media_product_type,permalink,timestamp,thumbnail_url,media_url,like_count,comments_count', limit: '30' })).data || [];
   await Promise.all(media.map(async (m: any) => {
     for (const metric of ['views,reach,saved,shares', 'reach,saved']) {
       try {
