@@ -424,3 +424,108 @@ td.clip { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-spa
 @media (max-width: 760px) { .tt-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding: 12px; } }
 .ig-cover { aspect-ratio: 4/5; }
 .ig-kind { position: absolute; right: 8px; top: 8px; background: rgba(20,19,16,.7); color: #fff; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; }
+
+/* ───────────── Mobiel (telefoon) ───────────── */
+.mtop, .mbar { display: none; }
+@media (max-width: 860px) {
+  html, body { overscroll-behavior-y: none; }
+  .shell, .shell.home { display: flex; flex-direction: column; height: 100dvh; }
+  .sidebar, .shell.home .sidebar { display: none !important; }
+  .main { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 16px 14px calc(84px + env(safe-area-inset-bottom)); }
+
+  /* Bovenbalk: app-naam (tik = andere app) en de pagina's van die app als tabs */
+  .mtop { display: block; flex: none; background: var(--ink); color: #f1ead9; padding-top: env(safe-area-inset-top); z-index: 5; }
+  .mtop-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 14px 8px 10px; min-height: 52px; }
+  .mtop-title { display: flex; align-items: center; gap: 10px; background: none; border: 0; color: inherit; font: inherit; font-size: 17px; padding: 4px 6px; border-radius: 10px; cursor: pointer; min-width: 0; }
+  .mtop-title:active { background: #2a2720; }
+  .mtop-title b { font-family: var(--serif); font-weight: 600; font-size: 19px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mtop-title .app-ico { background: color-mix(in srgb, var(--c) 35%, #1b1a15); color: #f1e6cf; }
+  .mtop-word { font-family: var(--serif); letter-spacing: .32em; font-size: 18px; font-weight: 600; padding-left: 4px; }
+  .mtop-caret { color: #8f8673; font-size: 12px; }
+  .mtop .avatar { width: 34px; height: 34px; flex: none; text-decoration: none; }
+  .mtabs { display: flex; gap: 6px; overflow-x: auto; padding: 0 12px 10px; scrollbar-width: none; scroll-snap-type: x proximity; }
+  .mtabs::-webkit-scrollbar { display: none; }
+  .mtabs a { flex: none; scroll-snap-align: center; color: #b9b09c; background: #22201a; border: 1px solid #34312a; padding: 7px 14px; border-radius: 99px; font-size: 14px; font-weight: 500; white-space: nowrap; text-decoration: none; }
+  .mtabs a.on { background: var(--gold-2); border-color: var(--gold-2); color: var(--ink); font-weight: 600; }
+
+  /* Onderbalk: Start, de drie belangrijkste apps en Meer */
+  .mbar { display: grid; grid-template-columns: repeat(5, 1fr); position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; background: rgba(20,19,15,.97); backdrop-filter: blur(10px); border-top: 1px solid #2a2720; padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); }
+  .mbar a { display: grid; justify-items: center; gap: 3px; padding: 4px 2px; color: #8f8673; text-decoration: none; border-radius: 10px; cursor: pointer; min-width: 0; -webkit-tap-highlight-color: transparent; }
+  .mbar a span { width: 44px; height: 28px; display: grid; place-items: center; border-radius: 99px; transition: .15s; }
+  .mbar a .ico { width: 21px; height: 21px; }
+  .mbar a small { font-size: 10.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .mbar a.on { color: #f1e6cf; }
+  .mbar a.on span { background: #34302a; color: var(--gold-2); }
+
+  /* Paginakop en knoppen */
+  .page-head { margin-bottom: 14px; gap: 10px; }
+  .page-head h1 { font-size: 26px; }
+  .page-head p { font-size: 14px; }
+  .head-actions { width: 100%; flex-wrap: wrap; }
+  .head-actions .btn { flex: 1 1 auto; justify-content: center; min-height: 42px; }
+  .btn { min-height: 38px; }
+
+  /* Cijfers twee naast elkaar */
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+  .stat { padding: 12px 13px; }
+  .stat span { font-size: 10.5px; letter-spacing: .05em; }
+  .stat strong { font-size: 20px; overflow-wrap: anywhere; }
+  .stat small { font-size: 12px; }
+
+  /* Startscherm: compacte app-tegels */
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .tile { min-height: 0; padding: 14px; border-radius: 14px; }
+  .tile-ico { width: 40px; height: 40px; margin-bottom: 6px; }
+  .tile h2 { font-size: 17px; }
+  .tile p { display: none; }
+  .tile small, .tile b { font-size: 12px; }
+
+  /* Filters in één veegbare rij */
+  .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -14px; padding: 0 14px 2px; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { flex: none; padding: 7px 13px; }
+
+  /* Horloges twee naast elkaar */
+  .watch-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .watch-body { padding: 10px; gap: 4px; }
+  .watch-body h3 { font-size: 15px; }
+  .watch-nums { grid-template-columns: 1fr; gap: 4px; }
+
+  /* Tabellen als kaarten */
+  .card.flush { overflow-x: visible; }
+  table.table.stack, table.table.stack tbody, table.table.stack tfoot { display: block; width: 100%; }
+  table.table.stack thead { display: none; }
+  table.table.stack tr { display: block; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+  table.table.stack tr:last-child { border-bottom: 0; }
+  table.table.stack td { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 3px 0; border: 0; text-align: right; min-width: 0; white-space: normal; max-width: none; }
+  table.table.stack td::before { content: attr(data-label); color: var(--muted); font-size: 12px; text-align: left; flex: none; max-width: 45%; }
+  table.table.stack td[data-label=""]::before { display: none; }
+  table.table.stack td:first-child { justify-content: flex-start; text-align: left; font-weight: 600; font-size: 15px; padding-bottom: 5px; }
+  table.table.stack td:first-child::before { display: none; }
+  table.table.stack td:empty { display: none; }
+  table.table.stack td[colspan] { justify-content: center; }
+  table.table.stack tfoot tr { background: var(--paper, #f6f2ea); }
+  table.table.stack tr[data-action] { cursor: pointer; }
+  table.table.stack tr[data-action]:active { background: #f3eee3; }
+
+  /* Vensters als blad dat van onderen omhoog komt */
+  .modal, .modal.detail { width: 100%; max-width: 100%; max-height: 92dvh; margin: auto 0 0; border-radius: 18px 18px 0 0; }
+  .modal-body { padding: 18px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .modal-body header h2 { font-size: 21px; }
+  .modal footer { position: sticky; bottom: calc(-16px - env(safe-area-inset-bottom)); background: var(--card); margin: 16px -16px calc(-16px - env(safe-area-inset-bottom)); padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
+  .modal footer .btn { flex: 1 1 auto; justify-content: center; min-height: 44px; }
+  /* geen inzoomen bij typen op iPhone */
+  input, select, textarea { font-size: 16px; }
+  .cols { grid-template-columns: minmax(0, 1fr); }
+}
+/* App-kiezer */
+.sheet-apps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.sheet-apps a { display: grid; justify-items: center; gap: 6px; padding: 12px 6px; border-radius: 14px; border: 1px solid var(--line); text-decoration: none; color: var(--ink); cursor: pointer; text-align: center; }
+.sheet-apps a.on { border-color: var(--c); background: color-mix(in srgb, var(--c) 8%, #fff); }
+.sheet-apps .tile-ico { margin: 0; width: 44px; height: 44px; }
+.sheet-apps b { font-size: 13px; font-weight: 600; }
+.sheet-pages { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.sheet-pages a { padding: 8px 14px; border-radius: 99px; border: 1px solid var(--line-2); text-decoration: none; color: var(--ink-2); cursor: pointer; }
+.sheet-pages a.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+@media (max-width: 860px) { table.table.stack td[data-label=""]:not(:first-child) { justify-content: flex-end; } }
+@media (max-width: 860px) { .integ-row { flex-wrap: wrap; } .integ-row > div:first-child { min-width: 0; flex: 1 1 100%; } .integ-row .row-actions { flex-wrap: wrap; } }

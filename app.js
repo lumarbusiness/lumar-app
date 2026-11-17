@@ -851,7 +851,7 @@ const pages = {
 
   settings() {
     const s = S().settings;
-    return head('Instellingen') + settingsTeam() + `
+    return head('Instellingen') + settingsTeam() + settingsDevices() + `
       <section class="card"><div class="card-head"><h2>Btw</h2></div>
         <label class="check"><input type="checkbox" data-setting="vat_enabled" ${s.vat_enabled ? 'checked' : ''}> Btw berekenen volgens de margeregeling</label>
         <p class="muted">Per verkocht horloge: (verkoopprijs − inkoopprijs) × ${s.vat_rate}/${100 + n(s.vat_rate)}. Zet dit uit als jullie onder de kleineondernemersregeling (KOR) vallen. Laat dit altijd controleren door een boekhouder.</p>
@@ -878,10 +878,14 @@ function render() {
   if (!store?.user) return;
   const home = route.mod === 'home';
   $('#sidebar').innerHTML = sidebarHtml();
+  $('#mtop').innerHTML = mobileTopHtml();
+  $('#mbar').innerHTML = mobileBarHtml();
   const main = $('#main');
   const scroll = main.scrollTop;
   main.innerHTML = home ? launcher() : pages[route.page]();
   main.scrollTop = scroll;
+  labelTables(main);
+  const on = $('#mtop .mtabs a.on'); if (on) on.scrollIntoView({ block: 'nearest', inline: 'center' });
   loadPhotos(main);
   const os = $('#odSearch');
   if (os) os.onkeydown = async ev => { if (ev.key !== 'Enter') return; ui.odQuery = os.value.trim(); if (!ui.odQuery) { od.search = null; render(); return; } od.search = { children: [] }; render(); try { od.search = await store.invoke('lumar-integrations', { action: 'od-search', q: ui.odQuery }); } catch (e) { toast(e.message, 'bad'); od.search = null; } render(); };
@@ -931,6 +935,7 @@ const ICON = {
   branding: '<circle cx="12" cy="12" r="9"/><circle cx="7.8" cy="11" r="1.2"/><circle cx="10.5" cy="7.2" r="1.2"/><circle cx="15.2" cy="8" r="1.2"/><path d="M13 21c-1.7 0-2.3-1.2-2.3-2.2 0-1.3 1-2.1 2.3-2.1h2.2A3.8 3.8 0 0 0 19 13"/>',
   documenten: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',
   instellingen: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
+  more: '<circle cx="5.5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18.5" cy="12" r="1.4"/>',
   apps: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/>',
 };
 const icon = (k, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k] || ''}</svg>`;
@@ -945,6 +950,40 @@ const MODULES = {
   documenten: { name: 'Documenten', desc: 'Bonnen, mail, documenten en OneDrive', color: '#46696a', pages: [['receipts', 'Bonnen'], ['inbox', 'Mail'], ['docs', 'Documenten'], ['onedrive', 'OneDrive']], quick: [['doc', '＋ Document', 'primary']] },
   instellingen: { name: 'Instellingen', desc: 'Btw, winstverdeling en account', color: '#5f5a50', pages: [['settings', 'Instellingen']], quick: [] },
 };
+// ───────────── Mobiel: bovenbalk met subpagina's, onderbalk met apps ─────────────
+const MBAR = ['voorraad', 'financien', 'marketing'];
+function mobileTopHtml() {
+  const home = route.mod === 'home', m = MODULES[route.mod];
+  const title = home ? `<span class="mtop-word">LUMAR</span>` : `<span class="app-ico" style="--c:${m.color}">${icon(route.mod)}</span><b>${m.name}</b>`;
+  return `<div class="mtop-row"><button class="mtop-title" data-action="apps-sheet" aria-label="Andere app kiezen">${title}<span class="mtop-caret">▾</span></button>
+      <a class="avatar" data-go="instellingen" aria-label="Instellingen">${esc(store.user.name[0])}</a></div>
+    ${!home && m.pages.length > 1 ? `<div class="mtabs" role="tablist">${m.pages.map(([k, label]) => `<a data-page="${k}" class="${route.page === k ? 'on' : ''}" role="tab">${label}</a>`).join('')}</div>` : ''}`;
+}
+function mobileBarHtml() {
+  const other = route.mod !== 'home' && !MBAR.includes(route.mod);
+  const btn = (go, ico, label, on) => `<a data-go="${go}" class="${on ? 'on' : ''}"><span>${icon(ico)}</span><small>${label}</small></a>`;
+  return btn('home', 'apps', 'Start', route.mod === 'home') + MBAR.map(k => btn(k, k, MODULES[k].name, route.mod === k)).join('') +
+    `<a data-action="apps-sheet" class="${other ? 'on' : ''}"><span>${icon('more')}</span><small>${other ? MODULES[route.mod].name : 'Meer'}</small></a>`;
+}
+function appsSheet() {
+  openDialog(`<div class="modal-body sheet-body"><header><div><p class="eyebrow">Apps</p><h2>Waar wil je heen?</h2></div><button class="x" data-close aria-label="Sluiten">×</button></header>
+    <div class="sheet-apps">${[['home', { name: 'Start', color: '#8a6a35' }], ...Object.entries(MODULES)].map(([k, m]) => `<a data-go="${k}" class="${route.mod === k ? 'on' : ''}" style="--c:${m.color}"><span class="tile-ico">${icon(k === 'home' ? 'apps' : k)}</span><b>${m.name}</b></a>`).join('')}</div>
+    ${route.mod !== 'home' && MODULES[route.mod].pages.length > 1 ? `<p class="eyebrow" style="margin-top:18px">${MODULES[route.mod].name}</p><div class="sheet-pages">${MODULES[route.mod].pages.map(([k, l]) => `<a data-go="${route.mod}/${k}" class="${route.page === k ? 'on' : ''}">${l}</a>`).join('')}</div>` : ''}
+  </div>`, 'sheet');
+}
+// Tabellen worden op de telefoon kaarten: elke cel krijgt de kolomnaam als label
+function labelTables(root) {
+  root.querySelectorAll('table.table').forEach(t => {
+    const heads = [...t.querySelectorAll('thead th')].map(th => th.textContent.trim());
+    if (!heads.length) return;
+    t.classList.add('stack');
+    t.querySelectorAll('tbody tr, tfoot tr').forEach(tr => {
+      let i = 0;
+      for (const td of tr.children) { td.dataset.label = td.colSpan > 1 ? '' : (heads[i] || ''); i += td.colSpan || 1; }
+    });
+  });
+}
+
 const moduleOf = p => Object.keys(MODULES).find(m => MODULES[m].pages.some(([k]) => k === p));
 
 const meHtml = () => `<div class="me" data-go="instellingen" title="Instellingen"><span class="avatar">${esc(store.user.name[0])}</span><div><b>${esc(store.user.name)}</b><small>${store.mode === 'demo' ? 'Demomodus' : 'Verbonden'}</small></div></div>`;
@@ -1425,6 +1464,26 @@ function settingsTeam() {
   </section>`;
 }
 
+let devices = null; // gekoppelde apparaten
+async function loadDevices() {
+  if (store.mode !== 'cloud') { devices = []; return; }
+  try { devices = await store.rpc('device_overview'); } catch { devices = null; }
+}
+function settingsDevices() {
+  if (store.mode !== 'cloud') return '';
+  const list = devices || [];
+  const per = name => list.filter(d => d.display_name === name).length;
+  const ico = n => /iPhone|Android/.test(n) ? '📱' : /iPad/.test(n) ? '📲' : '💻';
+  return `<section class="card"><div class="card-head"><h2>Apparaten</h2><span class="muted small">${partners().map(p => `${esc(p)} ${per(p)}/2`).join(' · ')}</span></div>
+    <p class="muted small-note" style="margin-top:0">Alleen deze apparaten kunnen in LUMAR, ook als iemand jullie wachtwoord heeft. Maximaal 2 per persoon. Nieuwe telefoon of laptop? Verwijder hier eerst het oude apparaat. Op de iPhone telt de app op je beginscherm apart van Safari, dus log alleen via het app-icoon in.</p>
+    ${!devices ? '<p class="muted">Laden…</p>' : `<div class="members">${list.map(d => `<div class="member">
+      <span class="avatar dev">${ico(d.name || '')}</span>
+      <div class="member-main"><b>${esc(d.name || 'Apparaat')}</b>${d.current ? ' <span class="badge">dit apparaat</span>' : ''}<div class="muted small">${esc(d.display_name || '')} · gekoppeld ${fdate(String(d.created_at).slice(0, 10))}</div></div>
+      <div class="member-meta"><div class="muted small">laatst gebruikt: ${ago(d.last_seen)}</div>${d.current ? '' : `<button class="btn small ghost danger-text" data-action="device-remove" data-id="${d.id}" data-name="${esc((d.display_name || '') + ' · ' + (d.name || ''))}">Verwijderen</button>`}</div>
+    </div>`).join('')}</div>`}
+  </section>`;
+}
+
 let integ = null; // status van koppelingen
 // Het Gmail-script meldt zich elke 15 minuten; na een uur stilte klopt er iets niet
 const gmailStale = () => !!integ?.gmail?.connected && Date.now() - new Date(integ.gmail.updated_at).getTime() > 60 * 60e3;
@@ -1829,6 +1888,11 @@ document.addEventListener('click', async e => {
   const inDetail = a.closest('dialog.detail');
   try {
     switch (a.dataset.action) {
+      case 'apps-sheet': appsSheet(); break;
+      case 'device-remove': {
+        if (!confirm(`Apparaat "${a.dataset.name}" verwijderen? Het wordt direct uitgelogd en de plek komt vrij.`)) break;
+        await store.rpc('remove_device', { p_id: id }); await loadDevices(); render(); toast('Apparaat verwijderd'); break;
+      }
       case 'purchase': purchaseForm(); break;
       case 'hours-add': hoursForm(); break;
       case 'edit-hours': hoursForm(id); break;
@@ -1944,6 +2008,7 @@ function showApp() {
   go(location.hash.slice(1) || 'home');
   loadIntegrations().then(() => { if (['settings', 'inbox', 'tiktok', 'instagram'].includes(route.page)) render(); });
   loadTeam().then(() => { if (route.page === 'settings') render(); });
+  loadDevices().then(() => { if (route.page === 'settings') render(); });
   store.onPresence = () => { if (route.page === 'settings' && !$('#modalRoot').children.length && !document.activeElement?.matches('input,select,textarea')) render(); };
 }
 
@@ -1952,7 +2017,7 @@ $('#loginForm').addEventListener('submit', async e => {
   const d = formValues(e.target), btn = $('button', e.target);
   btn.disabled = true; $('#authStatus').textContent = 'Bezig met inloggen…';
   try { await store.signIn(d.email.trim(), d.password); showApp(); }
-  catch (err) { $('#authStatus').textContent = /invalid login credentials/i.test(err.message) ? 'E-mailadres of wachtwoord klopt niet.' : `Inloggen mislukt: ${err.message}`; }
+  catch (err) { $('#authStatus').textContent = /invalid login credentials/i.test(err.message) ? 'E-mailadres of wachtwoord klopt niet.' : /^Dit apparaat/.test(err.message) ? err.message : `Inloggen mislukt: ${err.message}`; }
   finally { btn.disabled = false; }
 });
 

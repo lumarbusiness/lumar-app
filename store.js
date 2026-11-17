@@ -81,8 +81,30 @@ async function cloudStore(config, onRemoteChange) {
   const normalize = r => { const o = decorate(r); for (const k of NUM) if (o[k] !== null && o[k] !== undefined) o[k] = +o[k]; return o; };
   const clean = row => { const o = { ...row }; delete o.created_by_name; delete o.id; delete o.created_at; delete o.created_by; for (const k in o) if (o[k] === '' || o[k] === undefined) o[k] = null; return o; };
 
+  // Elk apparaat heeft een eigen geheime sleutel; de database laat alleen gekoppelde apparaten toe (max. 2 per persoon)
+  function deviceKey() {
+    let k = localStorage.getItem('lumar_device_key');
+    if (!k || k.length < 64) { k = [...crypto.getRandomValues(new Uint8Array(32))].map(b => b.toString(16).padStart(2, '0')).join(''); localStorage.setItem('lumar_device_key', k); }
+    return k;
+  }
+  function deviceName() {
+    const ua = navigator.userAgent;
+    const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : 'Computer';
+    const br = /Edg\//.test(ua) ? 'Edge' : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /FxiOS|Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'browser';
+    const app = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+    return `${os} · ${app ? 'app' : br}`;
+  }
+  async function claimDevice() {
+    const r = check(await sb.rpc('claim_device', { p_secret: deviceKey(), p_name: deviceName() }));
+    if (r?.ok) return;
+    await sb.auth.signOut(); user = null;
+    if (r?.reason === 'limiet') throw new Error(`Dit apparaat heeft geen toegang. Aan jouw account zijn al ${r.max} apparaten gekoppeld. Verwijder eerst een oud apparaat via Instellingen → Apparaten op een gekoppeld apparaat, en log hier daarna opnieuw in.`);
+    throw new Error(`Dit apparaat heeft geen toegang (${r?.reason || 'onbekend'}).`);
+  }
+
   async function setUser(session) {
     if (!session?.user) { user = null; return false; }
+    await claimDevice();
     members = check(await sb.from('members').select('*'));
     const me = members.find(m => m.user_id === session.user.id);
     if (!me) { await sb.auth.signOut(); throw new Error('Dit account is nog niet toegevoegd als lid van LUMAR. Zie de installatiehandleiding.'); }
