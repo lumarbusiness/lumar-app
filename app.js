@@ -197,6 +197,7 @@ function purchaseForm(opts = {}) {
       <input class="b-est" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Waarde €" aria-label="Geschatte verkoopwaarde">
       <input class="b-disc" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Korting €" aria-label="Korting">
       <input class="b-share" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Kosten €" aria-label="Kosten">
+      <label class="b-photo" title="Foto toevoegen"><input type="file" accept="image/*" class="b-photo-in" hidden><span>📷</span></label>
       <span class="b-alloc muted"></span>
       <button type="button" class="x b-del" title="Verwijderen">×</button>
     </div>`;
@@ -215,18 +216,22 @@ function purchaseForm(opts = {}) {
       { name: 'purchase_date', label: 'Inkoopdatum', type: 'date', value: today(), required: true },
       { name: 'platform', label: 'Platform', type: 'select', options: PLATFORMS },
       { name: 'seller', label: 'Verkoper', placeholder: 'Naam of gebruikersnaam', show: d => d.mode === 'single' },
+      { name: 'seller_b', label: 'Leverancier / verkoper', placeholder: 'Naam van de leverancier of verkoper', list: [...new Set(S().watches.map(w => w.seller).filter(Boolean))].sort(), show: d => d.mode === 'batch' },
       { name: 'reference_no', label: 'Bestelnummer / notitie', show: d => d.mode === 'batch' },
       { name: 'paid_total', label: 'Totaal te betalen volgens de bon (€)', type: 'money', show: d => d.mode === 'batch', hint: 'Het eindbedrag op de bon. Onderaan zie je of alles klopt.' },
       { name: 'purchase_price', label: 'Inkoopprijs (€)', type: 'money', required: true, value: pre.purchase_price, show: d => d.mode === 'single', hint: 'Wat je aan de verkoper betaalt' },
       { name: 'extra_costs', label: 'Extra kosten (€)', type: 'money', show: d => d.mode === 'single', hint: 'Verzending, kopersbescherming, service' },
       { name: 'estimated_value', label: 'Geschatte verkoopwaarde (€)', type: 'money', value: pre.estimated_value, show: d => d.mode === 'single' },
       { name: 'discount', label: 'Korting op de bestelling (€)', type: 'money', show: d => d.mode === 'batch' },
-      { name: 'disc_alloc', label: 'Korting verdelen', type: 'select', options: [['proportional', 'Naar verhouding van de prijs'], ['equal', 'Gelijk verdelen'], ['manual', 'Handmatig per horloge']], show: d => d.mode === 'batch' && n(d.discount) > 0 },
+      { name: 'disc_alloc', label: 'Korting verdelen', type: 'select', options: [['proportional', 'Naar verhouding van de prijs'], ['equal', 'Gelijk verdelen'], ['manual', 'Handmatig per horloge']], show: d => d.mode === 'batch' },
+      { name: 'allocation', label: 'Kosten zelf per horloge invullen?', type: 'select', options: [['per_type', 'Nee, verdelen zoals hierboven'], ['manual', 'Ja, handmatig per horloge']], show: d => d.mode === 'batch' },
       { name: 'shipping', label: 'Verzendkosten (€)', type: 'money', show: d => d.mode === 'batch', hint: 'Na eventuele verzendkorting (gratis verzending = 0).' },
+      { name: 'alloc_shipping', label: 'Verzendkosten verdelen', type: 'select', options: [['proportional', 'Naar verhouding van de prijs'], ['equal', 'Gelijk per horloge']], show: d => d.mode === 'batch' && d.allocation !== 'manual' },
       { name: 'protection', label: 'Kopersbescherming / garantie (€)', type: 'money', show: d => d.mode === 'batch' },
+      { name: 'alloc_protection', label: 'Garantie verdelen', type: 'select', value: 'equal', options: [['proportional', 'Naar verhouding van de prijs'], ['equal', 'Gelijk per horloge']], show: d => d.mode === 'batch' && d.allocation !== 'manual' },
       { name: 'other', label: 'Overige kosten, bijv. invoerrechten (€)', type: 'money', show: d => d.mode === 'batch' },
-      { name: 'allocation', label: 'Kosten verdelen', type: 'select', options: [['proportional', 'Naar verhouding van inkoopprijs'], ['equal', 'Gelijk verdelen'], ['manual', 'Handmatig']], show: d => d.mode === 'batch' },
-      { name: 'rows', type: 'html', wide: true, show: d => d.mode === 'batch', html: `<div class="batch"><div class="batch-head"><span>Horloges in deze bestelling</span><button type="button" class="btn small" data-addrow>＋ Horloge</button></div><div class="batch-cols"><span></span><span>Merk</span><span>Model</span><span>Referentie</span><span>Prijs (bon)</span><span>Waarde</span><span class="c-disc">Korting</span><span class="c-share">Kosten</span><span>Kostprijs</span><span></span></div><div class="batch-rows">${watchFields(0)}${watchFields(1)}</div><div class="batch-sum muted"></div></div>` },
+      { name: 'alloc_other', label: 'Overige kosten verdelen', type: 'select', options: [['proportional', 'Naar verhouding van de prijs'], ['equal', 'Gelijk per horloge']], show: d => d.mode === 'batch' && d.allocation !== 'manual' },
+      { name: 'rows', type: 'html', wide: true, show: d => d.mode === 'batch', html: `<div class="batch"><div class="batch-head"><span>Horloges in deze bestelling</span><button type="button" class="btn small" data-addrow>＋ Horloge</button></div><div class="batch-cols"><span></span><span>Merk</span><span>Model</span><span>Referentie</span><span>Prijs (bon)</span><span>Waarde</span><span class="c-disc">Korting</span><span class="c-share">Kosten</span><span>Foto</span><span>Kostprijs</span><span></span></div><div class="batch-rows">${watchFields(0)}${watchFields(1)}</div><div class="batch-sum muted"></div></div>` },
       { name: 'status', label: 'Status', type: 'select', options: [['incoming', 'Onderweg'], ['in_stock', 'Al binnen / op voorraad']] },
       { name: 'payment', label: 'Betaling', type: 'select', options: paymentOptions },
       { name: 'paid_by', label: 'Betaald door', type: 'select', options: partners(), value: store.user?.name, show: d => d.payment === 'private' },
@@ -243,6 +248,7 @@ function purchaseForm(opts = {}) {
     const sel = e.target;
     if (sel.matches('select[name=brand], select[name=model]')) await catalogChange(sel, $('select[name=brand]', f.form), $('select[name=model]', f.form));
     else if (sel.matches('.b-brand, .b-model')) { const row = sel.closest('.batch-row'); await catalogChange(sel, $('.b-brand', row), $('.b-model', row)); }
+    else if (sel.matches('.b-photo-in')) { const lab = sel.closest('.b-photo'); lab.classList.toggle('has', !!sel.files[0]); lab.title = sel.files[0]?.name || 'Foto toevoegen'; return; }
     else return;
     updateBatch(formValues(f.form), f.form);
   });
@@ -258,6 +264,7 @@ function batchData(d, form) {
   const rows = [...form.querySelectorAll('.batch-row')].map(r => ({
     el: r, brand: $('.b-brand', r).value.trim(), model: $('.b-model', r).value.trim(), reference: $('.b-ref', r).value.trim(),
     price: n($('.b-price', r).value), est: n($('.b-est', r).value), manual: n($('.b-share', r).value), manualDisc: n($('.b-disc', r).value),
+    photo: $('.b-photo-in', r).files[0] || null,
   }));
   // korting: naar verhouding van de prijs, gelijk, of handmatig per horloge
   const gross = round2(rows.reduce((a, r) => a + r.price, 0));
@@ -267,8 +274,11 @@ function batchData(d, form) {
     : splitMoney(discount, d.disc_alloc === 'equal' ? rows.map(() => 1) : rows.map(r => r.price));
   rows.forEach((r, i) => { r.gross = r.price; r.disc = discounts[i]; r.price = round2(r.gross - r.disc); });
   const shared = round2(n(d.shipping) + n(d.protection) + n(d.other));
+  // elke kostensoort apart verdelen: naar verhouding van de prijs (na korting) of gelijk per horloge
+  const weights = how => how === 'equal' ? rows.map(() => 1) : rows.map(r => r.price || 0);
+  const part = (amount, how) => n(amount) && rows.length ? splitMoney(n(amount), weights(how).some(x => x) ? weights(how) : rows.map(() => 1)) : rows.map(() => 0);
   const shares = d.allocation === 'manual' ? rows.map(r => r.manual)
-    : splitMoney(shared, d.allocation === 'equal' ? rows.map(() => 1) : rows.map(r => r.price));
+    : [part(d.shipping, d.alloc_shipping), part(d.protection, d.alloc_protection), part(d.other, d.alloc_other)].reduce((acc, arr) => acc.map((x, i) => round2(x + arr[i])), rows.map(() => 0));
   const items = round2(rows.reduce((a, r) => a + r.price, 0));
   return { rows, shared, shares, gross, discount, discounts, items, total: round2(items + shared), discSum: round2(discounts.reduce((a, x) => a + x, 0)) };
 }
@@ -327,14 +337,14 @@ async function saveBatch(d, form) {
   const receipt_path = await uploadReceipt(d.receipt);
   const batch = await store.insert('purchase_batches', {
     purchase_date: d.purchase_date, platform: d.platform, reference: d.reference_no, shipping_costs: n(d.shipping),
-    buyer_protection: n(d.protection), other_costs: n(d.other), allocation_method: d.allocation,
+    buyer_protection: n(d.protection), other_costs: n(d.other), allocation_method: d.allocation === 'manual' ? 'manual' : `per_type:${d.alloc_shipping}/${d.alloc_protection}/${d.alloc_other}`,
     payment_status: d.payment, paid_by: d.payment === 'private' ? d.paid_by : null, total_cost: total, receipt_path,
   });
   for (const [k, r] of rows.entries()) {
     const share = b.shares[idx[k]] || 0;
     await store.insert('watches', {
       brand: r.brand, model: r.model, reference: r.reference, status: d.status, purchase_date: d.purchase_date,
-      purchase_platform: d.platform, purchase_price: r.price, extra_costs: share, total_cost: round2(r.price + share),
+      purchase_platform: d.platform, seller: d.seller_b || null, photo_path: await uploadPhoto(r.photo), purchase_price: r.price, extra_costs: share, total_cost: round2(r.price + share),
       estimated_value: r.est, purchase_payment: 'batch', batch_id: batch.id, vat_scheme: d.vat_scheme || 'margin',
       history: hist(null, `Ingekocht in bundel via ${d.platform} (${rows.length} horloges) voor ${euro(r.price + share)}${r.disc ? ` (prijs ${euro(r.gross)}, korting ${euro(r.disc)})` : ''}`, d.purchase_date),
     });
@@ -829,6 +839,30 @@ const pages = {
       }).join('')}</div>` : empty(st.watches.length ? 'Geen horloges gevonden met dit filter.' : 'Nog geen horloges in de voorraad.', '<button class="btn primary" data-action="purchase">＋ Eerste inkoop</button>')}`;
   },
 
+  purchases() {
+    const st = S(), r = periodRange(ui.purchPeriod || 'year'), s = st.settings;
+    const q = (ui.purchQ || '').toLowerCase();
+    const list = st.watches.filter(w => w.purchase_date && inPeriod(w.purchase_date, r.from, r.to))
+      .filter(w => !q || [w.brand, w.model, w.reference, w.seller, w.purchase_platform].join(' ').toLowerCase().includes(q))
+      .sort((a, b) => b.purchase_date.localeCompare(a.purchase_date));
+    const sum = (arr, f) => arr.reduce((a, x) => a + n(f(x)), 0), avg = (arr, f) => arr.length ? sum(arr, f) / arr.length : 0;
+    const who = w => w.seller || w.purchase_platform || 'Onbekend';
+    const group = (arr, key) => { const m = new Map(); for (const w of arr) { const k = key(w); if (!m.has(k)) m.set(k, []); m.get(k).push(w); } return [...m.entries()]; };
+    const suppliers = group(list, who).map(([name, ws]) => ({ name, ws, platforms: [...new Set(ws.map(w => w.purchase_platform).filter(Boolean))].join(', '), last: ws.map(w => w.purchase_date).sort().pop() })).sort((a, b) => b.ws.length - a.ws.length || sum(b.ws, w => w.total_cost) - sum(a.ws, w => w.total_cost));
+    const models = group(list, w => `${w.brand} ${w.model}`).map(([name, ws]) => { const sold = ws.filter(w => w.status === 'sold'); return { name, ws, sold, min: Math.min(...ws.map(w => n(w.total_cost))), max: Math.max(...ws.map(w => n(w.total_cost))) }; }).sort((a, b) => b.ws.length - a.ws.length || a.name.localeCompare(b.name));
+    const statusOf = w => statusChip(w.status) + (w.batch_id ? ' <span class="chip">bundel</span>' : '');
+    return head('Inkopen', `${list.length} ${list.length === 1 ? 'horloge' : 'horloges'} ingekocht · ${r.label}`, `<input class="search small" id="purchSearch" placeholder="Zoek merk, model, leverancier…" value="${esc(ui.purchQ || '')}">${periodSelect(ui.purchPeriod || 'year', 'purchPeriod')}<button class="btn primary" data-action="purchase">＋ Inkoop</button>`) + `
+      <section class="stats">${stat('Ingekocht', String(list.length), (k => `${k} ${k === 1 ? 'bestelling' : 'bestellingen'}`)(new Set(list.map(w => w.batch_id || w.id)).size))}${stat('Totale kostprijs', euro(sum(list, w => w.total_cost)), `waarvan ${euro(sum(list, w => w.extra_costs))} extra kosten`)}${stat('Gem. kostprijs', list.length ? euro(avg(list, w => w.total_cost)) : '—', 'per horloge')}${stat('Leveranciers / verkopers', String(suppliers.length), suppliers[0] ? `meest: ${esc(suppliers[0].name)}` : '')}</section>
+      ${!list.length ? empty(q ? 'Niets gevonden.' : 'Nog geen inkopen in deze periode.') : `
+        <div class="card flush"><div class="card-head pad"><h2>Per leverancier / verkoper</h2></div><table class="table"><thead><tr><th>Naam</th><th>Platform</th><th class="r">Aantal</th><th class="r">Totaal</th><th class="r">Gem. kostprijs</th><th>Laatste</th></tr></thead><tbody>
+          ${suppliers.map(x => `<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.platforms)}</td><td class="r">${x.ws.length}</td><td class="r">${euro(sum(x.ws, w => w.total_cost))}</td><td class="r">${euro(avg(x.ws, w => w.total_cost))}</td><td>${fdate(x.last)}</td></tr>`).join('')}</tbody></table></div>
+        <div class="card flush"><div class="card-head pad"><h2>Gemiddelde prijs per model</h2></div><table class="table"><thead><tr><th>Model</th><th class="r">Aantal</th><th class="r">Gem. kostprijs</th><th class="r">Laagste – hoogste</th><th class="r">Gem. verkoop</th><th class="r">Gem. winst</th></tr></thead><tbody>
+          ${models.map(x => `<tr><td><b>${esc(x.name)}</b></td><td class="r">${x.ws.length}</td><td class="r">${euro(avg(x.ws, w => w.total_cost))}</td><td class="r">${x.ws.length > 1 && x.min !== x.max ? `${euro(x.min)} – ${euro(x.max)}` : '—'}</td><td class="r">${x.sold.length ? euro(avg(x.sold, w => w.sale_price)) : '—'}</td><td class="r">${x.sold.length ? signed(avg(x.sold, w => watchProfit(w, s))) : '—'}</td></tr>`).join('')}</tbody></table></div>
+      <div class="card flush"><div class="card-head pad"><h2>Alle inkopen</h2></div><table class="table"><thead><tr><th>Datum</th><th>Horloge</th><th>Platform</th><th>Leverancier / verkoper</th><th class="r">Prijs</th><th class="r">Kostprijs</th><th>Status</th></tr></thead><tbody>
+        ${list.map(w => `<tr data-action="watch" data-id="${w.id}"><td>${fdate(w.purchase_date)}</td><td><b>${esc(wname(w))}</b><small class="muted"> ${esc(w.reference || '')}</small></td><td>${esc(w.purchase_platform || '')}</td><td>${esc(w.seller || '')}</td><td class="r">${euro(w.purchase_price)}</td><td class="r">${euro(w.total_cost)}</td><td>${statusOf(w)}</td></tr>`).join('')}
+      </tbody></table></div>`}`;
+  },
+
   sales() {
     const st = S(), r = periodRange(ui.salesPeriod), s = st.settings;
     const list = st.watches.filter(w => w.status === 'sold' && inPeriod(w.sale_date, r.from, r.to)).sort((a, b) => b.sale_date.localeCompare(a.sale_date));
@@ -973,6 +1007,8 @@ function render() {
   if (ms) ms.oninput = () => { ui.mailSearch = ms.value; const pos = ms.selectionStart; render(); const m2 = $('#mailSearch'); m2.focus(); m2.setSelectionRange(pos, pos); };
   const search = $('#stockSearch');
   if (search) search.oninput = () => { ui.stockSearch = search.value; const pos = search.selectionStart; render(); const s2 = $('#stockSearch'); s2.focus(); s2.setSelectionRange(pos, pos); };
+  const ps = $('#purchSearch');
+  if (ps) ps.oninput = () => { ui.purchQ = ps.value; const pos = ps.selectionStart; render(); const p2 = $('#purchSearch'); p2.focus(); p2.setSelectionRange(pos, pos); };
 }
 
 const routeHash = () => route.mod === 'home' ? 'home' : `${route.mod}/${route.page}`;
@@ -1019,7 +1055,7 @@ const ICON = {
 const icon = (k, cls = '') => `<svg class="ico ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[k] || ''}</svg>`;
 
 const MODULES = {
-  voorraad: { name: 'Voorraad', desc: 'Horloges, inkoop en verkoop', color: '#8a6a35', pages: [['stock', 'Voorraad'], ['sales', 'Verkopen']], quick: [['purchase', '＋ Inkoop', 'primary'], ['sale', '＋ Verkoop']] },
+  voorraad: { name: 'Voorraad', desc: 'Horloges, inkoop en verkoop', color: '#8a6a35', pages: [['stock', 'Voorraad'], ['purchases', 'Inkopen'], ['sales', 'Verkopen']], quick: [['purchase', '＋ Inkoop', 'primary'], ['sale', '＋ Verkoop']] },
   financien: { name: 'Financiën', desc: 'Resultaat, uitgaven, bank en vennoten', color: '#2f6b4f', pages: [['dashboard', 'Overzicht'], ['expenses', 'Uitgaven'], ['bank', 'Bank'], ['reports', 'Rapportages'], ['partners', 'Vennoten'], ['vat', 'Btw-aangifte'], ['tax', 'Belastingen'], ['check', 'Controle']], quick: [['expense', '＋ Uitgave', 'primary'], ['bank-entry', '＋ Mutatie']] },
   marketing: { name: 'Marketing', desc: 'Contentkalender en posts', color: '#9a4a3a', pages: [['mk-overview', 'Overzicht'], ['calendar', 'Kalender'], ['posts', 'Alle posts'], ['instagram', 'Instagram'], ['tiktok', 'TikTok']], quick: [['post', '＋ Post', 'primary']] },
   ideeen: { name: 'Ideeën', desc: 'Ideeënbord en wishlist', color: '#a2802a', pages: [['ideas', 'Ideeënbord'], ['wishlist', 'Wishlist']], quick: [['idea', '＋ Idee', 'primary'], ['wish', '＋ Wens']] },
@@ -1071,7 +1107,7 @@ const moduleOf = p => Object.keys(MODULES).find(m => MODULES[m].pages.some(([k])
 const meHtml = () => `<div class="me" data-go="instellingen" title="Instellingen"><span class="avatar">${esc(store.user.name[0])}</span><div><b>${esc(store.user.name)}</b><small>${store.mode === 'demo' ? 'Demomodus' : 'Verbonden'}</small></div></div>`;
 function sidebarHtml() {
   const home = route.mod === 'home', m = MODULES[route.mod];
-  return `<a class="brand-row" data-go="home"><img src="icon.svg" alt="" width="36" height="36"><span class="wordmark small">LUMAR<span>Watches</span></span></a>
+  return `<a class="wordmark small" data-go="home">LUMAR<span>Watches</span></a>
     <nav id="nav">
       <a data-go="home" class="app ${home ? 'on' : ''}"><span class="app-ico">${icon('apps')}</span><span>Start</span></a>
       ${Object.entries(MODULES).map(([k, mod]) => {

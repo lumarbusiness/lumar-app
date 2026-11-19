@@ -536,10 +536,10 @@ td.clip { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-spa
 
 /* Bundel-inkoop: breed venster met kolommen */
 .modal.xl { width: min(1180px, calc(100vw - 32px)); }
-.batch-cols, .batch-row { display: grid; gap: 6px; align-items: center; --cols: 24px 1.2fr 1.2fr 1.3fr .8fr .8fr 1.2fr 28px; grid-template-columns: var(--cols); }
-.m-disc .batch-cols, .m-disc .batch-row { --cols: 24px 1.2fr 1.2fr 1.3fr .8fr .8fr .8fr 1.2fr 28px; }
-.m-share .batch-cols, .m-share .batch-row { --cols: 24px 1.2fr 1.2fr 1.3fr .8fr .8fr .8fr 1.2fr 28px; }
-.m-disc.m-share .batch-cols, .m-disc.m-share .batch-row { --cols: 24px 1.2fr 1.2fr 1.3fr .8fr .8fr .8fr .8fr 1.2fr 28px; }
+.batch-cols, .batch-row { display: grid; gap: 6px; align-items: center; --cols: 24px 1.2fr 1.2fr 1.3fr .8fr .8fr 44px 1.2fr 28px; grid-template-columns: var(--cols); }
+.m-disc .batch-cols, .m-disc .batch-row { --cols: 24px 1.2fr 1.2fr 1.3fr .8fr .8fr .8fr 44px 1.2fr 28px; }
+.m-share .batch-cols, .m-share .batch-row { --cols: 24px 1.2fr 1.2fr 1.3fr .8fr .8fr .8fr 44px 1.2fr 28px; }
+.m-disc.m-share .batch-cols, .m-disc.m-share .batch-row { --cols: 24px 1.2fr 1.2fr 1.3fr .8fr .8fr .8fr .8fr 44px 1.2fr 28px; }
 .batch-cols { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); padding: 0 0 4px; }
 .batch-cols .c-disc, .batch-cols .c-share { display: none; }
 .m-disc .batch-cols .c-disc, .m-share .batch-cols .c-share { display: block; }
@@ -565,3 +565,12 @@ td.clip { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-spa
 .cat-add input { width: 140px; padding: 5px 8px; }
 .cat-new { display: flex; gap: 8px; margin-top: 12px; }
 .cat-new input { flex: 1; max-width: 320px; }
+
+.b-photo { display: grid; place-items: center; height: 36px; border: 1px dashed var(--line-2); border-radius: 8px; cursor: pointer; font-size: 16px; filter: grayscale(1); opacity: .6; }
+.b-photo:hover { border-color: var(--gold); opacity: 1; }
+.b-photo.has { border-style: solid; border-color: #2e9d5b; background: #e8f4ec; filter: none; opacity: 1; }
+/* geen zichtbare scrollbalken, scrollen blijft gewoon werken */
+* { scrollbar-width: none; }
+*::-webkit-scrollbar { width: 0; height: 0; display: none; }
+.page-head .search.small { max-width: 260px; min-height: 38px; }
+@media (max-width: 860px) { .page-head .search.small { max-width: none; flex: 1 1 100%; } }
