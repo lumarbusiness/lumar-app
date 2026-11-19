@@ -532,3 +532,7 @@ td.clip { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-spa
 .choice { display: grid; gap: 12px; }
 .choice .check { align-items: flex-start; font-weight: 400; }
 .choice .check input { margin-top: 4px; }
+.auth-logo { display: block; margin: 0 auto 14px; width: 88px; height: 88px; }
+.brand-row { display: flex; align-items: center; gap: 10px; text-decoration: none; cursor: pointer; }
+.brand-row img { flex: none; width: 36px; height: 36px; }
+.brand-row .wordmark.small { margin: 0; }

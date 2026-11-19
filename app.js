@@ -1006,7 +1006,7 @@ const moduleOf = p => Object.keys(MODULES).find(m => MODULES[m].pages.some(([k])
 const meHtml = () => `<div class="me" data-go="instellingen" title="Instellingen"><span class="avatar">${esc(store.user.name[0])}</span><div><b>${esc(store.user.name)}</b><small>${store.mode === 'demo' ? 'Demomodus' : 'Verbonden'}</small></div></div>`;
 function sidebarHtml() {
   const home = route.mod === 'home', m = MODULES[route.mod];
-  return `<a class="wordmark small" data-go="home">LUMAR<span>Watches</span></a>
+  return `<a class="brand-row" data-go="home"><img src="icon.svg" alt="" width="36" height="36"><span class="wordmark small">LUMAR<span>Watches</span></span></a>
     <nav id="nav">
       <a data-go="home" class="app ${home ? 'on' : ''}"><span class="app-ico">${icon('apps')}</span><span>Start</span></a>
       ${Object.entries(MODULES).map(([k, mod]) => {
