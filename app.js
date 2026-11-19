@@ -148,28 +148,64 @@ async function removeBankRef(ref) {
 }
 const paymentOptions = [['paid', 'Betaald vanaf zakelijke rekening'], ['pending', 'Nog te betalen'], ['private', 'Privé betaald door vennoot']];
 
+// ───────────── Merken en modellen (lijst om uit te kiezen) ─────────────
+function catalog() {
+  const saved = S().settings.catalog;
+  const c = {};
+  if (saved && typeof saved === 'object') for (const [b, ms] of Object.entries(saved)) c[b] = [...(ms || [])];
+  else for (const w of S().watches) if (w.brand) { (c[w.brand] ||= []); if (w.model && !c[w.brand].includes(w.model)) c[w.brand].push(w.model); }
+  for (const b in c) c[b].sort((x, y) => x.localeCompare(y, 'nl'));
+  return Object.fromEntries(Object.entries(c).sort(([a], [b]) => a.localeCompare(b, 'nl')));
+}
+async function saveCatalog(c) { await store.setSetting('catalog', c); }
+async function addToCatalog(brand, model) {
+  brand = (brand || '').trim(); model = (model || '').trim(); if (!brand) return;
+  const c = catalog(); const had = c[brand] && (!model || c[brand].includes(model));
+  if (had) return; (c[brand] ||= []); if (model && !c[brand].includes(model)) c[brand].push(model);
+  await saveCatalog(c);
+}
+const brandOptions = (cur = '') => { const bs = Object.keys(catalog()); if (cur && !bs.includes(cur)) bs.push(cur);
+  return `<option value="">Kies merk…</option>${bs.map(b => `<option ${b === cur ? 'selected' : ''}>${esc(b)}</option>`).join('')}<option value="__new">＋ Nieuw merk…</option>`; };
+const modelOptions = (brand, cur = '') => { const ms = [...(catalog()[brand] || [])]; if (cur && !ms.includes(cur)) ms.push(cur);
+  return `<option value="">${brand ? 'Kies model…' : 'Eerst merk'}</option>${ms.map(m => `<option ${m === cur ? 'selected' : ''}>${esc(m)}</option>`).join('')}${brand ? '<option value="__new">＋ Nieuw model…</option>' : ''}`; };
+// Merk/model-keuzelijsten: '＋ Nieuw…' vraagt een naam en zet die meteen in de lijst
+async function catalogChange(sel, brandSel, modelSel) {
+  if (sel === brandSel) {
+    if (brandSel.value === '__new') {
+      const name = (prompt('Naam van het nieuwe merk:') || '').trim();
+      if (name) await addToCatalog(name);
+      brandSel.innerHTML = brandOptions(name); brandSel.value = name;
+    }
+    modelSel.innerHTML = modelOptions(brandSel.value);
+  } else if (sel === modelSel && modelSel.value === '__new') {
+    const name = (prompt(`Nieuw model van ${brandSel.value}:`) || '').trim();
+    if (name) await addToCatalog(brandSel.value, name);
+    modelSel.innerHTML = modelOptions(brandSel.value, name); modelSel.value = name;
+  }
+}
+
 // Inkoop (één horloge of bundel)
 function purchaseForm(opts = {}) {
   const pre = opts.prefill || {};
   const watchFields = i => `
     <div class="batch-row" data-row="${i}">
       <div class="batch-no">${i + 1}</div>
-      <input class="b-brand" placeholder="Merk" list="dl-brands">
-      <input class="b-model" placeholder="Model">
-      <input class="b-ref" placeholder="Referentie">
-      <input class="b-price" type="number" step="0.01" min="0" placeholder="Inkoop €">
-      <input class="b-est" type="number" step="0.01" min="0" placeholder="Waarde €">
-      <input class="b-share" type="number" step="0.01" min="0" placeholder="Kosten €">
+      <select class="b-brand" aria-label="Merk">${brandOptions()}</select>
+      <select class="b-model" aria-label="Model">${modelOptions('')}</select>
+      <input class="b-ref" placeholder="Referentie" aria-label="Referentie">
+      <input class="b-price" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Prijs €" aria-label="Prijs op de bon">
+      <input class="b-est" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Waarde €" aria-label="Geschatte verkoopwaarde">
+      <input class="b-disc" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Korting €" aria-label="Korting">
+      <input class="b-share" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Kosten €" aria-label="Kosten">
       <span class="b-alloc muted"></span>
       <button type="button" class="x b-del" title="Verwijderen">×</button>
     </div>`;
-  const brands = [...new Set(S().watches.map(w => w.brand))].sort();
   const f = openForm({
     eyebrow: 'Nieuwe inkoop', title: 'Horloge inkopen', submit: 'Inkoop opslaan',
     fields: [
       { name: 'mode', label: 'Soort inkoop', type: 'select', options: [['single', 'Eén horloge'], ['batch', 'Bundel: meerdere horloges in één bestelling']], wide: true },
-      { name: 'brand', label: 'Merk', required: true, list: brands, value: pre.brand, show: d => d.mode === 'single' },
-      { name: 'model', label: 'Model', required: true, value: pre.model, show: d => d.mode === 'single' },
+      { name: 'brand', label: 'Merk', type: 'html', show: d => d.mode === 'single', html: `<label class="field"><span>Merk</span><select name="brand">${brandOptions(pre.brand || '')}</select></label>` },
+      { name: 'model', label: 'Model', type: 'html', show: d => d.mode === 'single', html: `<label class="field"><span>Model</span><select name="model">${modelOptions(pre.brand || '', pre.model || '')}</select></label>` },
       { name: 'reference', label: 'Referentienummer', value: pre.reference, show: d => d.mode === 'single' },
       { name: 'serial', label: 'Serienummer', show: d => d.mode === 'single' },
       { name: 'year', label: 'Bouwjaar', placeholder: 'bv. 2019 of ca. 1975', show: d => d.mode === 'single' },
@@ -180,15 +216,17 @@ function purchaseForm(opts = {}) {
       { name: 'platform', label: 'Platform', type: 'select', options: PLATFORMS },
       { name: 'seller', label: 'Verkoper', placeholder: 'Naam of gebruikersnaam', show: d => d.mode === 'single' },
       { name: 'reference_no', label: 'Bestelnummer / notitie', show: d => d.mode === 'batch' },
+      { name: 'paid_total', label: 'Totaal te betalen volgens de bon (€)', type: 'money', show: d => d.mode === 'batch', hint: 'Het eindbedrag op de bon. Onderaan zie je of alles klopt.' },
       { name: 'purchase_price', label: 'Inkoopprijs (€)', type: 'money', required: true, value: pre.purchase_price, show: d => d.mode === 'single', hint: 'Wat je aan de verkoper betaalt' },
       { name: 'extra_costs', label: 'Extra kosten (€)', type: 'money', show: d => d.mode === 'single', hint: 'Verzending, kopersbescherming, service' },
       { name: 'estimated_value', label: 'Geschatte verkoopwaarde (€)', type: 'money', value: pre.estimated_value, show: d => d.mode === 'single' },
-      { name: 'discount', label: 'Korting op de bestelling (€)', type: 'money', show: d => d.mode === 'batch', hint: 'Wordt naar verhouding van de prijs over de horloges verdeeld.' },
+      { name: 'discount', label: 'Korting op de bestelling (€)', type: 'money', show: d => d.mode === 'batch' },
+      { name: 'disc_alloc', label: 'Korting verdelen', type: 'select', options: [['proportional', 'Naar verhouding van de prijs'], ['equal', 'Gelijk verdelen'], ['manual', 'Handmatig per horloge']], show: d => d.mode === 'batch' && n(d.discount) > 0 },
       { name: 'shipping', label: 'Verzendkosten (€)', type: 'money', show: d => d.mode === 'batch', hint: 'Na eventuele verzendkorting (gratis verzending = 0).' },
       { name: 'protection', label: 'Kopersbescherming / garantie (€)', type: 'money', show: d => d.mode === 'batch' },
       { name: 'other', label: 'Overige kosten, bijv. invoerrechten (€)', type: 'money', show: d => d.mode === 'batch' },
       { name: 'allocation', label: 'Kosten verdelen', type: 'select', options: [['proportional', 'Naar verhouding van inkoopprijs'], ['equal', 'Gelijk verdelen'], ['manual', 'Handmatig']], show: d => d.mode === 'batch' },
-      { name: 'rows', type: 'html', wide: true, show: d => d.mode === 'batch', html: `<div class="batch"><div class="batch-head"><span>Horloges in deze bestelling</span><button type="button" class="btn small" data-addrow>＋ Horloge</button></div><datalist id="dl-brands">${brands.map(b => `<option value="${esc(b)}">`).join('')}</datalist><div class="batch-rows">${watchFields(0)}${watchFields(1)}</div><div class="batch-sum muted"></div></div>` },
+      { name: 'rows', type: 'html', wide: true, show: d => d.mode === 'batch', html: `<div class="batch"><div class="batch-head"><span>Horloges in deze bestelling</span><button type="button" class="btn small" data-addrow>＋ Horloge</button></div><div class="batch-cols"><span></span><span>Merk</span><span>Model</span><span>Referentie</span><span>Prijs (bon)</span><span>Waarde</span><span class="c-disc">Korting</span><span class="c-share">Kosten</span><span>Kostprijs</span><span></span></div><div class="batch-rows">${watchFields(0)}${watchFields(1)}</div><div class="batch-sum muted"></div></div>` },
       { name: 'status', label: 'Status', type: 'select', options: [['incoming', 'Onderweg'], ['in_stock', 'Al binnen / op voorraad']] },
       { name: 'payment', label: 'Betaling', type: 'select', options: paymentOptions },
       { name: 'paid_by', label: 'Betaald door', type: 'select', options: partners(), value: store.user?.name, show: d => d.payment === 'private' },
@@ -197,10 +235,17 @@ function purchaseForm(opts = {}) {
       { name: 'receipt', label: 'Bon / bestelbevestiging', type: 'file' },
       { name: 'notes', label: 'Notities', type: 'textarea', wide: true, show: d => d.mode === 'single' },
     ],
-    onInput: (d, form) => updateBatch(d, form),
+    onInput: (d, form) => { form.closest('dialog').classList.toggle('xl', d.mode === 'batch'); updateBatch(d, form); },
     onSubmit: async (d, form) => { const r = d.mode === 'batch' ? await saveBatch(d, form) : await saveSingle(d); if (r !== false) await opts.after?.(); return r; },
   });
   const rowsEl = $('.batch-rows', f.form);
+  f.form.addEventListener('change', async e => {
+    const sel = e.target;
+    if (sel.matches('select[name=brand], select[name=model]')) await catalogChange(sel, $('select[name=brand]', f.form), $('select[name=model]', f.form));
+    else if (sel.matches('.b-brand, .b-model')) { const row = sel.closest('.batch-row'); await catalogChange(sel, $('.b-brand', row), $('.b-model', row)); }
+    else return;
+    updateBatch(formValues(f.form), f.form);
+  });
   f.form.addEventListener('click', e => {
     if (e.target.closest('[data-addrow]')) { rowsEl.insertAdjacentHTML('beforeend', watchFields(rowsEl.children.length)); renumber(); updateBatch(formValues(f.form), f.form); }
     const del = e.target.closest('.b-del');
@@ -212,31 +257,46 @@ function purchaseForm(opts = {}) {
 function batchData(d, form) {
   const rows = [...form.querySelectorAll('.batch-row')].map(r => ({
     el: r, brand: $('.b-brand', r).value.trim(), model: $('.b-model', r).value.trim(), reference: $('.b-ref', r).value.trim(),
-    price: n($('.b-price', r).value), est: n($('.b-est', r).value), manual: n($('.b-share', r).value),
+    price: n($('.b-price', r).value), est: n($('.b-est', r).value), manual: n($('.b-share', r).value), manualDisc: n($('.b-disc', r).value),
   }));
-  // korting gaat altijd naar verhouding van de prijs van de horloges af
+  // korting: naar verhouding van de prijs, gelijk, of handmatig per horloge
   const gross = round2(rows.reduce((a, r) => a + r.price, 0));
   const discount = Math.min(n(d.discount), gross);
-  const discounts = discount && gross ? splitMoney(discount, rows.map(r => r.price)) : rows.map(() => 0);
+  const discounts = !discount || !gross ? rows.map(() => 0)
+    : d.disc_alloc === 'manual' ? rows.map(r => r.manualDisc)
+    : splitMoney(discount, d.disc_alloc === 'equal' ? rows.map(() => 1) : rows.map(r => r.price));
   rows.forEach((r, i) => { r.gross = r.price; r.disc = discounts[i]; r.price = round2(r.gross - r.disc); });
   const shared = round2(n(d.shipping) + n(d.protection) + n(d.other));
   const shares = d.allocation === 'manual' ? rows.map(r => r.manual)
     : splitMoney(shared, d.allocation === 'equal' ? rows.map(() => 1) : rows.map(r => r.price));
-  return { rows, shared, shares, gross, discount, items: round2(rows.reduce((a, r) => a + r.price, 0)) };
+  const items = round2(rows.reduce((a, r) => a + r.price, 0));
+  return { rows, shared, shares, gross, discount, discounts, items, total: round2(items + shared), discSum: round2(discounts.reduce((a, x) => a + x, 0)) };
 }
 function updateBatch(d, form) {
   if (d.mode !== 'batch') return;
   const b = batchData(d, form);
   b.rows.forEach((r, i) => {
     $('.b-share', r.el).hidden = d.allocation !== 'manual';
-    $('.b-alloc', r.el).textContent = (r.disc ? `− ${euro(r.disc)} korting ` : '') + (d.allocation === 'manual' ? (r.disc ? `= ${euro(r.price)}` : '') : `+ ${euro(b.shares[i])} kosten = ${euro(r.price + b.shares[i])}`);
+    $('.b-disc', r.el).hidden = !(b.discount && d.disc_alloc === 'manual');
+    $('.b-alloc', r.el).innerHTML = r.gross || r.disc || b.shares[i] ? `<b>${euro(r.price + (b.shares[i] || 0))}</b><small>${r.disc && d.disc_alloc !== 'manual' ? `−${euro(r.disc)} korting ` : ''}${d.allocation !== 'manual' && b.shares[i] ? `+${euro(b.shares[i])} kosten` : ''}</small>` : '';
   });
+  const dlg = form.closest('dialog');
+  dlg.classList.toggle('m-disc', !!(b.discount && d.disc_alloc === 'manual'));
+  dlg.classList.toggle('m-share', d.allocation === 'manual');
   const manualSum = round2(b.shares.reduce((a, x) => a + x, 0));
-  $('.batch-sum', form).innerHTML = `Horloges ${euro(b.gross)}${b.discount ? ` − korting ${euro(b.discount)}` : ''} · gezamenlijke kosten ${euro(b.shared)} · <b>totaal ${euro(b.items + b.shared)}</b>` +
-    (d.allocation === 'manual' && Math.abs(manualSum - b.shared) > 0.005 ? ` <span class="bad">· handmatig verdeeld: ${euro(manualSum)}</span>` : '');
+  const paid = n(d.paid_total), diff = round2(b.total - paid);
+  const check = !paid ? '<span class="muted">Vul bovenaan het totaal van de bon in, dan controleert de app of alles klopt.</span>'
+    : Math.abs(diff) < 0.005 ? `<span class="good">✓ Klopt met de bon (${euro(paid)})</span>`
+    : `<span class="bad">✗ Bon zegt ${euro(paid)}, hier staat ${euro(b.total)}: verschil ${euro(Math.abs(diff))} ${diff > 0 ? 'te veel' : 'te weinig'}</span>`;
+  $('.batch-sum', form).innerHTML = `<div>Horloges ${euro(b.gross)}${b.discount ? ` − korting ${euro(b.discount)}` : ''} + kosten ${euro(b.shared)} = <b>totaal ${euro(b.total)}</b></div>` +
+    (b.discount && d.disc_alloc === 'manual' && Math.abs(b.discSum - b.discount) > 0.005 ? `<div class="bad">Korting per horloge samen ${euro(b.discSum)}, moet ${euro(b.discount)} zijn</div>` : '') +
+    (d.allocation === 'manual' && Math.abs(manualSum - b.shared) > 0.005 ? `<div class="bad">Kosten per horloge samen ${euro(manualSum)}, moet ${euro(b.shared)} zijn</div>` : '') +
+    `<div class="batch-check">${check}</div>`;
 }
 
 async function saveSingle(d) {
+  if (!d.brand || d.brand === '__new' || !d.model || d.model === '__new') { toast('Kies een merk en model', 'bad'); return false; }
+  await addToCatalog(d.brand, d.model);
   const total = round2(n(d.purchase_price) + n(d.extra_costs));
   const [photo_path, receipt_path] = await Promise.all([uploadPhoto(d.photo), uploadReceipt(d.receipt)]);
   const w = await store.insert('watches', {
@@ -258,8 +318,12 @@ async function saveBatch(d, form) {
   if (rows.length < 2) { toast('Een bundel heeft minimaal twee horloges', 'bad'); return false; }
   if (rows.some(r => !r.brand || !r.model)) { toast('Vul merk en model van elk horloge in', 'bad'); return false; }
   if (d.allocation === 'manual' && Math.abs(b.shares.reduce((a, x) => a + x, 0) - b.shared) > 0.005) { toast(`De handmatige verdeling moet samen ${euro(b.shared)} zijn`, 'bad'); return false; }
+  if (b.discount && d.disc_alloc === 'manual' && Math.abs(b.discSum - b.discount) > 0.005) { toast(`De korting per horloge moet samen ${euro(b.discount)} zijn`, 'bad'); return false; }
+  if (rows.some(r => r.price < 0)) { toast('Een horloge heeft meer korting dan zijn prijs', 'bad'); return false; }
+  if (n(d.paid_total) && Math.abs(b.total - n(d.paid_total)) > 0.005) { toast(`Het totaal (${euro(b.total)}) klopt niet met de bon (${euro(n(d.paid_total))}). Controleer korting en kosten.`, 'bad'); return false; }
   const idx = rows.map(r => b.rows.indexOf(r));
-  const total = round2(b.items + b.shared);
+  const total = b.total;
+  for (const r of rows) await addToCatalog(r.brand, r.model);
   const receipt_path = await uploadReceipt(d.receipt);
   const batch = await store.insert('purchase_batches', {
     purchase_date: d.purchase_date, platform: d.platform, reference: d.reference_no, shipping_costs: n(d.shipping),
@@ -869,6 +933,7 @@ const pages = {
         <label class="check"><input type="checkbox" data-setting="vat_enabled" ${s.vat_enabled ? 'checked' : ''}> Btw berekenen volgens de margeregeling</label>
         <p class="muted">Per verkocht horloge: (verkoopprijs − inkoopprijs) × ${s.vat_rate}/${100 + n(s.vat_rate)}. Zet dit uit als jullie onder de kleineondernemersregeling (KOR) vallen. Laat dit altijd controleren door een boekhouder.</p>
       </section>` : ''}
+      ${settingsCatalog()}
       <section class="card"><div class="card-head"><h2>Winstverdeling</h2></div>
         <div class="grid">${partners().map(p => `<label class="field"><span>${esc(p)} (%)</span><input type="number" min="0" max="100" step="1" data-share="${esc(p)}" value="${n(s.profit_shares?.[p] ?? 100 / partners().length)}"></label>`).join('')}</div>
         <p class="muted small-note">Samen altijd 100%: verander je het ene percentage, dan past het andere zich vanzelf aan. Wordt automatisch opgeslagen.</p>
@@ -1481,6 +1546,19 @@ function settingsTeam() {
   </section>`;
 }
 
+function settingsCatalog() {
+  const c = catalog(), bs = Object.keys(c);
+  return `<section class="card"><div class="card-head"><h2>Merken en modellen</h2><span class="muted small">${bs.length} ${bs.length === 1 ? "merk" : "merken"}</span></div>
+    <p class="muted small-note" style="margin-top:0">Hieruit kies je bij een inkoop. Nieuwe merken en modellen kun je ook direct in het inkoopformulier toevoegen; ze komen dan vanzelf hier te staan.</p>
+    <div class="cat">${bs.map(b => `<div class="cat-brand">
+        <div class="cat-head"><b>${esc(b)}</b><button class="x" data-action="cat-del-brand" data-brand="${esc(b)}" title="Merk verwijderen">×</button></div>
+        <div class="cat-models">${c[b].map(m => `<span class="chip">${esc(m)}<button class="chip-x" data-action="cat-del-model" data-brand="${esc(b)}" data-model="${esc(m)}" title="Verwijderen">×</button></span>`).join('')}
+          <span class="cat-add"><input placeholder="＋ model" data-cat-model="${esc(b)}"><button class="btn small" data-action="cat-add-model" data-brand="${esc(b)}">Toevoegen</button></span></div>
+      </div>`).join('') || '<p class="muted">Nog geen merken.</p>'}</div>
+    <div class="cat-new"><input placeholder="Nieuw merk, bijv. Seiko" id="catNewBrand"><button class="btn" data-action="cat-add-brand">＋ Merk</button></div>
+  </section>`;
+}
+
 let devices = null; // gekoppelde apparaten
 async function loadDevices() {
   if (store.mode !== 'cloud') { devices = []; return; }
@@ -1907,6 +1985,10 @@ document.addEventListener('click', async e => {
   try {
     switch (a.dataset.action) {
       case 'apps-sheet': appsSheet(); break;
+      case 'cat-add-brand': { const v = $('#catNewBrand').value.trim(); if (!v) break; await addToCatalog(v); toast(`${v} toegevoegd`); render(); break; }
+      case 'cat-add-model': { const inp = document.querySelector(`[data-cat-model="${CSS.escape(a.dataset.brand)}"]`); const v = inp?.value.trim(); if (!v) break; await addToCatalog(a.dataset.brand, v); render(); break; }
+      case 'cat-del-model': { const c = catalog(); c[a.dataset.brand] = (c[a.dataset.brand] || []).filter(m => m !== a.dataset.model); await saveCatalog(c); render(); break; }
+      case 'cat-del-brand': { if (!confirm(`${a.dataset.brand} met alle modellen uit de lijst halen? Bestaande horloges blijven gewoon staan.`)) break; const c = catalog(); delete c[a.dataset.brand]; await saveCatalog(c); render(); break; }
       case 'device-remove': {
         if (!confirm(`Apparaat "${a.dataset.name}" verwijderen? Het wordt direct uitgelogd en de plek komt vrij.`)) break;
         await store.rpc('remove_device', { p_id: id }); await loadDevices(); render(); toast('Apparaat verwijderd'); break;
