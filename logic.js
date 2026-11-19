@@ -21,7 +21,7 @@ export const STATUS = {
 };
 export const ACTIVE = ['incoming', 'in_stock', 'customer_returning'];
 
-export const PLATFORMS = ['Vinted', 'Marktplaats', 'Chrono24', 'Catawiki', 'eBay', 'Instagram', 'Particulier', 'Anders'];
+export const PLATFORMS = ['Vinted', 'Marktplaats', 'Chrono24', 'Catawiki', 'eBay', 'Instagram', 'Leverancier', 'Particulier', 'Anders'];
 export const EXPENSE_CATEGORIES = ['Algemeen', 'Verzending', 'Retourkosten', 'Verpakking', 'Reparatie & service', 'Website & software', 'Marketing', 'Abonnementen'];
 export const BOX_PAPERS = { full: 'Box & papieren', box: 'Alleen box', papers: 'Alleen papieren', none: 'Geen' };
 export const BANK_TYPES = {

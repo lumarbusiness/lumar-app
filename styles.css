@@ -372,7 +372,7 @@ textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, mono
 .sidebar .sub a { padding: 6px 10px; border-radius: 7px; color: #a39b88; font-size: 13.5px; }
 .sidebar .sub a:hover { color: #fff; background: #22201a; }
 .sidebar .sub a.on { color: #fff; background: #2a2720; }
-.sidebar .sub a.on::before { content: ''; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--gold-2); margin: 0 8px 2px 0; }
+
 .sidebar-foot { margin-top: 8px; }
 .launch-hello { margin-bottom: 22px; }
 @media (max-width: 860px) {

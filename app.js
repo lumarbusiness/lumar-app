@@ -183,9 +183,10 @@ function purchaseForm(opts = {}) {
       { name: 'purchase_price', label: 'Inkoopprijs (€)', type: 'money', required: true, value: pre.purchase_price, show: d => d.mode === 'single', hint: 'Wat je aan de verkoper betaalt' },
       { name: 'extra_costs', label: 'Extra kosten (€)', type: 'money', show: d => d.mode === 'single', hint: 'Verzending, kopersbescherming, service' },
       { name: 'estimated_value', label: 'Geschatte verkoopwaarde (€)', type: 'money', value: pre.estimated_value, show: d => d.mode === 'single' },
-      { name: 'shipping', label: 'Verzendkosten (€)', type: 'money', show: d => d.mode === 'batch' },
-      { name: 'protection', label: 'Kopersbescherming (€)', type: 'money', show: d => d.mode === 'batch' },
-      { name: 'other', label: 'Overige gezamenlijke kosten (€)', type: 'money', show: d => d.mode === 'batch' },
+      { name: 'discount', label: 'Korting op de bestelling (€)', type: 'money', show: d => d.mode === 'batch', hint: 'Wordt naar verhouding van de prijs over de horloges verdeeld.' },
+      { name: 'shipping', label: 'Verzendkosten (€)', type: 'money', show: d => d.mode === 'batch', hint: 'Na eventuele verzendkorting (gratis verzending = 0).' },
+      { name: 'protection', label: 'Kopersbescherming / garantie (€)', type: 'money', show: d => d.mode === 'batch' },
+      { name: 'other', label: 'Overige kosten, bijv. invoerrechten (€)', type: 'money', show: d => d.mode === 'batch' },
       { name: 'allocation', label: 'Kosten verdelen', type: 'select', options: [['proportional', 'Naar verhouding van inkoopprijs'], ['equal', 'Gelijk verdelen'], ['manual', 'Handmatig']], show: d => d.mode === 'batch' },
       { name: 'rows', type: 'html', wide: true, show: d => d.mode === 'batch', html: `<div class="batch"><div class="batch-head"><span>Horloges in deze bestelling</span><button type="button" class="btn small" data-addrow>＋ Horloge</button></div><datalist id="dl-brands">${brands.map(b => `<option value="${esc(b)}">`).join('')}</datalist><div class="batch-rows">${watchFields(0)}${watchFields(1)}</div><div class="batch-sum muted"></div></div>` },
       { name: 'status', label: 'Status', type: 'select', options: [['incoming', 'Onderweg'], ['in_stock', 'Al binnen / op voorraad']] },
@@ -213,20 +214,25 @@ function batchData(d, form) {
     el: r, brand: $('.b-brand', r).value.trim(), model: $('.b-model', r).value.trim(), reference: $('.b-ref', r).value.trim(),
     price: n($('.b-price', r).value), est: n($('.b-est', r).value), manual: n($('.b-share', r).value),
   }));
+  // korting gaat altijd naar verhouding van de prijs van de horloges af
+  const gross = round2(rows.reduce((a, r) => a + r.price, 0));
+  const discount = Math.min(n(d.discount), gross);
+  const discounts = discount && gross ? splitMoney(discount, rows.map(r => r.price)) : rows.map(() => 0);
+  rows.forEach((r, i) => { r.gross = r.price; r.disc = discounts[i]; r.price = round2(r.gross - r.disc); });
   const shared = round2(n(d.shipping) + n(d.protection) + n(d.other));
   const shares = d.allocation === 'manual' ? rows.map(r => r.manual)
     : splitMoney(shared, d.allocation === 'equal' ? rows.map(() => 1) : rows.map(r => r.price));
-  return { rows, shared, shares, items: round2(rows.reduce((a, r) => a + r.price, 0)) };
+  return { rows, shared, shares, gross, discount, items: round2(rows.reduce((a, r) => a + r.price, 0)) };
 }
 function updateBatch(d, form) {
   if (d.mode !== 'batch') return;
   const b = batchData(d, form);
   b.rows.forEach((r, i) => {
     $('.b-share', r.el).hidden = d.allocation !== 'manual';
-    $('.b-alloc', r.el).textContent = d.allocation === 'manual' ? '' : `+ ${euro(b.shares[i])} = ${euro(r.price + b.shares[i])}`;
+    $('.b-alloc', r.el).textContent = (r.disc ? `− ${euro(r.disc)} korting ` : '') + (d.allocation === 'manual' ? (r.disc ? `= ${euro(r.price)}` : '') : `+ ${euro(b.shares[i])} kosten = ${euro(r.price + b.shares[i])}`);
   });
   const manualSum = round2(b.shares.reduce((a, x) => a + x, 0));
-  $('.batch-sum', form).innerHTML = `Horloges ${euro(b.items)} · gezamenlijke kosten ${euro(b.shared)} · <b>totaal ${euro(b.items + b.shared)}</b>` +
+  $('.batch-sum', form).innerHTML = `Horloges ${euro(b.gross)}${b.discount ? ` − korting ${euro(b.discount)}` : ''} · gezamenlijke kosten ${euro(b.shared)} · <b>totaal ${euro(b.items + b.shared)}</b>` +
     (d.allocation === 'manual' && Math.abs(manualSum - b.shared) > 0.005 ? ` <span class="bad">· handmatig verdeeld: ${euro(manualSum)}</span>` : '');
 }
 
@@ -266,7 +272,7 @@ async function saveBatch(d, form) {
       brand: r.brand, model: r.model, reference: r.reference, status: d.status, purchase_date: d.purchase_date,
       purchase_platform: d.platform, purchase_price: r.price, extra_costs: share, total_cost: round2(r.price + share),
       estimated_value: r.est, purchase_payment: 'batch', batch_id: batch.id, vat_scheme: d.vat_scheme || 'margin',
-      history: hist(null, `Ingekocht in bundel via ${d.platform} (${rows.length} horloges) voor ${euro(r.price + share)}`, d.purchase_date),
+      history: hist(null, `Ingekocht in bundel via ${d.platform} (${rows.length} horloges) voor ${euro(r.price + share)}${r.disc ? ` (prijs ${euro(r.gross)}, korting ${euro(r.disc)})` : ''}`, d.purchase_date),
     });
   }
   if (d.payment === 'paid') await addBank({ date: d.purchase_date, description: `${d.platform}-bestelling · ${rows.length} horloges`, amount: -total, type: 'purchase', reference_id: `batch:${batch.id}` });
