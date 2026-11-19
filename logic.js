@@ -21,6 +21,10 @@ export const STATUS = {
 };
 export const ACTIVE = ['incoming', 'in_stock', 'customer_returning'];
 
+// Btw en belastingen tellen pas mee als jullie officieel (KvK) ingeschreven zijn
+export const isOfficial = settings => settings?.business_status === 'registered';
+export const vatOn = settings => isOfficial(settings) && settings?.vat_enabled === true;
+
 export const PLATFORMS = ['Vinted', 'Marktplaats', 'Chrono24', 'Catawiki', 'eBay', 'Instagram', 'Leverancier', 'Particulier', 'Anders'];
 export const EXPENSE_CATEGORIES = ['Algemeen', 'Verzending', 'Retourkosten', 'Verpakking', 'Reparatie & service', 'Website & software', 'Marketing', 'Abonnementen'];
 export const BOX_PAPERS = { full: 'Box & papieren', box: 'Alleen box', papers: 'Alleen papieren', none: 'Geen' };
@@ -47,7 +51,7 @@ export function splitMoney(total, weights) {
 
 // Btw volgens de margeregeling (per horloge): marge = verkoopprijs − inkoopprijs; btw = marge × 21/121
 export function marginVat(w, settings) {
-  if (!settings?.vat_enabled || w.vat_scheme !== 'margin' || w.status !== 'sold') return 0;
+  if (!vatOn(settings) || w.vat_scheme !== 'margin' || w.status !== 'sold') return 0;
   const rate = n(settings.vat_rate ?? 21);
   const margin = n(w.sale_price) - n(w.purchase_price);
   return margin > 0 ? round2(margin * rate / (100 + rate)) : 0;
@@ -263,7 +267,7 @@ export function actionItems(state) {
     if (w.status === 'incoming' && w.purchase_date && daysBetween(w.purchase_date, today) > 10)
       items.push({ id: `late:${w.id}`, kind: 'late', watchId: w.id, date: w.purchase_date, description: `${w.brand} ${w.model}`, reason: `Al ${daysBetween(w.purchase_date, today)} dagen onderweg` });
   }
-  if (state.settings?.vat_enabled) {
+  if (vatOn(state.settings)) {
     const y = +today.slice(0, 4), q = quarterOf(today);
     for (const [yy, qq] of [[q === 1 ? y - 1 : y, q === 1 ? 4 : q - 1], [y, q]]) {
       const v = vatReturn(state, yy, qq);
@@ -407,7 +411,7 @@ export function incomeTax(state, year) {
 
 export function taxPot(state, year) {
   const it = incomeTax(state, year);
-  const vat = state.settings?.vat_enabled ? Math.max(0, vatOwed(state)) : 0;
+  const vat = vatOn(state.settings) ? Math.max(0, vatOwed(state)) : 0;
   const ib = round2(it.reduce((a, p) => a + p.reserve, 0));
   return { vat, ib, total: round2(vat + ib), perPartner: it };
 }

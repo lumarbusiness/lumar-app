@@ -5,7 +5,7 @@ import {
   watchProfit, calc, bankBalance, pendingPayments, partnerCapital, actionItems, daysBetween, monthlyResults,
   quarterlyVat, groupSold, linkedReturnCosts, toCsv, inPeriod, customerReturns, capitalizedSum, purchaseAmount,
   vatOwed, reconcile, receiptRecords, missingReceipts, MANUAL_BANK_TYPES,
-  vatReturn, quarterOf, vatRef, incomeTax, taxPot, taxYear, hoursByPerson,
+  vatReturn, quarterOf, vatRef, incomeTax, taxPot, taxYear, hoursByPerson, isOfficial, vatOn,
 } from './logic.js';
 
 // ───────────── Hulpjes ─────────────
@@ -192,7 +192,7 @@ function purchaseForm(opts = {}) {
       { name: 'status', label: 'Status', type: 'select', options: [['incoming', 'Onderweg'], ['in_stock', 'Al binnen / op voorraad']] },
       { name: 'payment', label: 'Betaling', type: 'select', options: paymentOptions },
       { name: 'paid_by', label: 'Betaald door', type: 'select', options: partners(), value: store.user?.name, show: d => d.payment === 'private' },
-      { name: 'vat_scheme', label: 'Btw-regeling bij verkoop', type: 'select', options: [['margin', 'Margeregeling (gekocht van particulier)'], ['none', 'Geen btw']], show: () => S().settings.vat_enabled },
+      { name: 'vat_scheme', label: 'Btw-regeling bij verkoop', type: 'select', options: [['margin', 'Margeregeling (gekocht van particulier)'], ['none', 'Geen btw']], show: () => vatOn(S().settings) },
       { name: 'photo', label: 'Foto', type: 'file', accept: 'image/*', show: d => d.mode === 'single' },
       { name: 'receipt', label: 'Bon / bestelbevestiging', type: 'file' },
       { name: 'notes', label: 'Notities', type: 'textarea', wide: true, show: d => d.mode === 'single' },
@@ -300,7 +300,7 @@ function saleForm(watchId) {
       const w = watchById(d.watch_id); if (!w) return;
       const tmp = { ...w, status: 'sold', sale_price: n(d.sale_price), sale_costs: n(d.sale_costs) };
       const vat = marginVat(tmp, s), profit = watchProfit(tmp, s);
-      $('.preview', form).innerHTML = d.sale_price ? `<div>Kostprijs <b>${euro(w.total_cost)}</b></div>${s.vat_enabled && w.vat_scheme === 'margin' ? `<div>Btw (marge) <b>${euro(vat)}</b></div>` : ''}<div>Winst <b class="${profit < 0 ? 'bad' : 'good'}">${euro(profit)}</b></div><div>Marge <b>${n(d.sale_price) ? Math.round(profit / n(d.sale_price) * 100) : 0}%</b></div>` : '<span class="muted">Vul de verkoopprijs in om de winst te zien.</span>';
+      $('.preview', form).innerHTML = d.sale_price ? `<div>Kostprijs <b>${euro(w.total_cost)}</b></div>${vatOn(s) && w.vat_scheme === 'margin' ? `<div>Btw (marge) <b>${euro(vat)}</b></div>` : ''}<div>Winst <b class="${profit < 0 ? 'bad' : 'good'}">${euro(profit)}</b></div><div>Marge <b>${n(d.sale_price) ? Math.round(profit / n(d.sale_price) * 100) : 0}%</b></div>` : '<span class="muted">Vul de verkoopprijs in om de winst te zien.</span>';
     },
     onSubmit: async d => {
       const w = watchById(d.watch_id);
@@ -668,7 +668,7 @@ async function watchDetail(id) {
         ${row('Inkoopprijs', euro(w.purchase_price))}${row(batch ? 'Aandeel bundelkosten' : 'Extra kosten bij inkoop', euro(n(w.extra_costs) - cap))}${cap ? row('Kosten achteraf', `<button class="link" data-go="financien/expenses">${euro(cap)}</button>`) : ''}${row('Kostprijs', `<span class="big-num">${euro(w.total_cost)}</span>`)}
         ${row('Betaling', { paid: 'Betaald', pending: 'Nog te betalen', private: `Privé · ${esc(w.purchase_paid_by)}`, batch: batch ? `Via bundel (${batch.payment_status === 'pending' ? 'nog te betalen' : 'betaald'})` : 'Bundel' }[w.purchase_payment])}
         ${ACTIVE.includes(w.status) ? row('Geschatte waarde', w.estimated_value ? euro(w.estimated_value) : '—') + row('Dagen in bezit', days) : ''}
-        ${w.status === 'sold' ? `<h3>Verkoop</h3>${row('Datum', fdate(w.sale_date))}${row('Platform', esc(w.sale_platform))}${row('Koper', esc(w.buyer))}${row('Verkoopprijs', euro(w.sale_price))}${row('Verkoopkosten', euro(w.sale_costs))}${s.vat_enabled && w.vat_scheme === 'margin' ? row('Btw (marge)', euro(marginVat(w, s))) : ''}${row('Winst', signed(watchProfit(w, s)))}${row('Doorlooptijd', `${days} dagen`)}${row('Betaling', w.sale_payment === 'pending' ? 'Nog te ontvangen' : 'Ontvangen')}` : ''}
+        ${w.status === 'sold' ? `<h3>Verkoop</h3>${row('Datum', fdate(w.sale_date))}${row('Platform', esc(w.sale_platform))}${row('Koper', esc(w.buyer))}${row('Verkoopprijs', euro(w.sale_price))}${row('Verkoopkosten', euro(w.sale_costs))}${vatOn(s) && w.vat_scheme === 'margin' ? row('Btw (marge)', euro(marginVat(w, s))) : ''}${row('Winst', signed(watchProfit(w, s)))}${row('Doorlooptijd', `${days} dagen`)}${row('Betaling', w.sale_payment === 'pending' ? 'Nog te ontvangen' : 'Ontvangen')}` : ''}
         ${w.supplier_return ? `<h3>Retour naar verkoper</h3>${row('Datum', fdate(w.supplier_return.date))}${row('Terugbetaling', euro(w.supplier_return.refund))}${row('Status', w.supplier_return.payment === 'pending' ? 'Nog te ontvangen' : 'Ontvangen')}` : ''}
         ${crs.length ? `<h3>Retouren van klanten</h3>${crs.map(r => row(`${fdate(r.date)}${r.reason ? ' · ' + esc(r.reason) : ''}`, `${euro(r.received)} ontvangen · ${euro(r.amount)} terug${r.payment === 'pending' ? ' (open)' : ''}`)).join('')}` : ''}
         ${w.write_off ? `<h3>Afschrijving</h3>${row('Datum', fdate(w.write_off.date))}${row('Bedrag', euro(w.total_cost))}${row('Reden', esc(w.write_off.reason))}` : ''}
@@ -725,13 +725,13 @@ const pages = {
     const bal = bankBalance(st), acts = actionItems(st);
     const recent = [...st.watches].sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at))).slice(0, 6);
     const rc = reconcile(st), owed = vatOwed(st);
-    return head('Financieel overzicht', `Stand van zaken ${y.label}`) + `
+    return head('Financieel overzicht', `Stand van zaken ${y.label}${isOfficial(st.settings) ? '' : ' · nog geen officieel bedrijf: zonder btw en inkomstenbelasting'}`) + `
       <a class="check-banner ${rc.ok ? 'ok' : 'bad'}" data-go="financien/check">${rc.ok ? '✓ De boekhouding sluit: bank, voorraad, openstaande posten en resultaat kloppen met elkaar.' : `⚠︎ De controle vond ${rc.issues.length} ${rc.issues.length === 1 ? 'punt' : 'punten'} om na te kijken.`} <span>Controle ›</span></a>
       <section class="stats">
         ${stat(`Resultaat ${y.label}`, signed(c.result), `${c.soldCount} verkocht · omzet ${euro(c.revenue)}`, 'data-go="reports"')}
         ${stat('Voorraad', euro(all.stock), `${all.stockCount} ${all.stockCount === 1 ? 'horloge' : 'horloges'} · geschat ${euro(all.stockEstimated)}`, 'data-go="stock"')}
         ${stat('Banksaldo', euro(bal), `verwacht ${euro(bal + recv - pay)}`, 'data-go="bank"')}
-        ${stat('Openstaand', `<span class="good">+${euro(recv)}</span> <span class="bad">−${euro(pay)}</span>`, `te ontvangen / te betalen${st.settings.vat_enabled ? ` · btw af te dragen ${euro(owed)}` : ''}`, 'data-go="bank"')}
+        ${stat('Openstaand', `<span class="good">+${euro(recv)}</span> <span class="bad">−${euro(pay)}</span>`, `te ontvangen / te betalen${vatOn(st.settings) ? ` · btw af te dragen ${euro(owed)}` : ''}`, 'data-go="bank"')}
       </section>
       <section class="cols">
         <div class="card"><div class="card-head"><h2>Actie nodig</h2><span class="badge">${acts.length}</span></div>
@@ -768,7 +768,7 @@ const pages = {
   sales() {
     const st = S(), r = periodRange(ui.salesPeriod), s = st.settings;
     const list = st.watches.filter(w => w.status === 'sold' && inPeriod(w.sale_date, r.from, r.to)).sort((a, b) => b.sale_date.localeCompare(a.sale_date));
-    const c = calc(st, r), vat = s.vat_enabled;
+    const c = calc(st, r), vat = vatOn(s);
     return head('Verkopen', `${list.length} verkocht · ${r.label}`, `${periodSelect(ui.salesPeriod, 'salesPeriod')}<button class="btn primary" data-action="sale">＋ Verkoop</button>`) + `
       <section class="stats">${stat('Omzet', euro(c.revenue))}${vat ? stat('Btw (marge)', euro(c.vat)) : ''}${stat('Brutowinst', signed(c.grossProfit - c.saleCosts), 'na verkoopkosten')}${stat('Gem. winst per horloge', list.length ? signed((c.grossProfit - c.saleCosts) / list.length) : '—')}</section>
       ${list.length ? `<div class="card flush"><table class="table"><thead><tr><th>Datum</th><th>Horloge</th><th>Platform</th><th class="r">Kostprijs</th><th class="r">Verkoop</th><th class="r">Kosten</th>${vat ? '<th class="r">Btw</th>' : ''}<th class="r">Winst</th><th class="r">Marge</th><th></th></tr></thead><tbody>
@@ -798,7 +798,7 @@ const pages = {
     const entries = [...st.bank_entries].sort((a, b) => b.date.localeCompare(a.date) || String(b.created_at).localeCompare(String(a.created_at)));
     const manual = MANUAL_BANK_TYPES, owed = vatOwed(st);
     return head('Bank', 'Zakelijke rekening, bijgewerkt door elke betaalde inkoop, verkoop en uitgave.', '<button class="btn" data-action="balance">Saldo corrigeren</button><button class="btn primary" data-action="bank-entry">＋ Mutatie</button>') + `
-      <section class="stats">${stat('Saldo', euro(bal))}${stat('Te ontvangen', `<span class="good">${euro(recv)}</span>`)}${stat('Te betalen', `<span class="bad">${euro(pay)}</span>`)}${stat('Verwacht saldo', euro(bal + recv - pay), st.settings.vat_enabled ? `daarna nog btw af te dragen: ${euro(owed)}` : '')}</section>
+      <section class="stats">${stat('Saldo', euro(bal))}${stat('Te ontvangen', `<span class="good">${euro(recv)}</span>`)}${stat('Te betalen', `<span class="bad">${euro(pay)}</span>`)}${stat('Verwacht saldo', euro(bal + recv - pay), vatOn(st.settings) ? `daarna nog btw af te dragen: ${euro(owed)}` : '')}</section>
       <section class="card"><div class="card-head"><h2>Openstaand</h2></div>
         ${pend.length ? `<ul class="list">${pend.map(p => `<li><div><b>${esc(p.description)}</b><small>${p.direction === 'in' ? 'Te ontvangen' : 'Te betalen'} · ${fdate(p.date)}</small></div><span class="${p.direction === 'in' ? 'good' : 'bad'}">${p.direction === 'in' ? '+' : '−'}${euro(p.amount)}</span><button class="btn small" data-action="settle" data-id="${p.id}">Verwerken</button></li>`).join('')}</ul>` : empty('Niets openstaand.')}
       </section>
@@ -816,7 +816,7 @@ const pages = {
       <section class="cols">
         <div class="card"><div class="card-head"><h2>Resultatenrekening</h2></div><div class="statement">
           ${line('Omzet', euro(c.revenue))}
-          ${s.vat_enabled ? line('Btw margeregeling', `− ${euro(c.vat)}`) + line('Netto-omzet', euro(c.netRevenue), 'sub') : ''}
+          ${vatOn(s) ? line('Btw margeregeling', `− ${euro(c.vat)}`) + line('Netto-omzet', euro(c.netRevenue), 'sub') : ''}
           ${line('Inkoopwaarde verkochte horloges', `− ${euro(c.cogs)}`)}
           ${line('Brutowinst', euro(c.grossProfit), 'sub')}
           ${line('Verkoopkosten', `− ${euro(c.saleCosts)}`)}
@@ -839,7 +839,7 @@ const pages = {
       </section>
       <section class="card"><div class="card-head"><h2>Resultaat per maand</h2><small class="muted">laatste 12 maanden</small></div>${barChart(monthlyResults(st, today().slice(0, 7)))}</section>
       <section class="cols">${group('Per merk', groupSold(st, 'brand', r))}${group('Per verkoopplatform', groupSold(st, 'sale_platform', r))}</section>
-      ${s.vat_enabled ? `<section class="card"><div class="card-head"><h2>Btw per kwartaal ${year}</h2><small class="muted">margeregeling, indicatief — laat je aangifte controleren</small></div><table class="table compact"><thead><tr><th>Kwartaal</th><th class="r">Verkocht</th><th class="r">Omzet</th><th class="r">Btw (marge)</th><th class="r">Afgedragen in kwartaal</th></tr></thead><tbody>${quarterlyVat(st, year).map(q => `<tr><td>${q.quarter}</td><td class="r">${q.count}</td><td class="r">${euro(q.revenue)}</td><td class="r"><b>${euro(q.vat)}</b></td><td class="r">${euro(q.paid)}</td></tr>`).join('')}</tbody></table><p class="muted small-note">Nog af te dragen in totaal: <b>${euro(vatOwed(st))}</b>. Boek een betaling aan de Belastingdienst via Bank → ＋ Mutatie → Btw-afdracht.</p></section>` : ''}`;
+      ${vatOn(s) ? `<section class="card"><div class="card-head"><h2>Btw per kwartaal ${year}</h2><small class="muted">margeregeling, indicatief — laat je aangifte controleren</small></div><table class="table compact"><thead><tr><th>Kwartaal</th><th class="r">Verkocht</th><th class="r">Omzet</th><th class="r">Btw (marge)</th><th class="r">Afgedragen in kwartaal</th></tr></thead><tbody>${quarterlyVat(st, year).map(q => `<tr><td>${q.quarter}</td><td class="r">${q.count}</td><td class="r">${euro(q.revenue)}</td><td class="r"><b>${euro(q.vat)}</b></td><td class="r">${euro(q.paid)}</td></tr>`).join('')}</tbody></table><p class="muted small-note">Nog af te dragen in totaal: <b>${euro(vatOwed(st))}</b>. Boek een betaling aan de Belastingdienst via Bank → ＋ Mutatie → Btw-afdracht.</p></section>` : ''}`;
   },
 
   partners() {
@@ -857,16 +857,23 @@ const pages = {
 
   settings() {
     const s = S().settings;
+    const official = isOfficial(s);
     return head('Instellingen') + settingsTeam() + settingsDevices() + `
-      <section class="card"><div class="card-head"><h2>Btw</h2></div>
+      <section class="card"><div class="card-head"><h2>Bedrijfsvorm</h2><span class="chip ${official ? 'ps-posted' : ''}">${official ? 'Ingeschreven bij de KvK' : 'Nog geen officieel bedrijf'}</span></div>
+        <div class="choice">
+          <label class="check"><input type="radio" name="bstatus" data-setting="business_status" value="informal" ${official ? '' : 'checked'}> <span><b>Nog geen officieel bedrijf</b><br><span class="muted">Geen btw en geen ondernemersaftrek: de app rekent niets met btw of inkomstenbelasting, en de pagina's Btw-aangifte en Belastingen zijn verborgen. Inkoop, verkoop, winst en de winstverdeling werken gewoon.</span></span></label>
+          <label class="check"><input type="radio" name="bstatus" data-setting="business_status" value="registered" ${official ? 'checked' : ''}> <span><b>Ingeschreven bij de KvK</b><br><span class="muted">Btw-aangifte, btw-herinneringen en de berekening van inkomstenbelasting worden aangezet.</span></span></label>
+        </div>
+      </section>
+      ${official ? `<section class="card"><div class="card-head"><h2>Btw</h2></div>
         <label class="check"><input type="checkbox" data-setting="vat_enabled" ${s.vat_enabled ? 'checked' : ''}> Btw berekenen volgens de margeregeling</label>
         <p class="muted">Per verkocht horloge: (verkoopprijs − inkoopprijs) × ${s.vat_rate}/${100 + n(s.vat_rate)}. Zet dit uit als jullie onder de kleineondernemersregeling (KOR) vallen. Laat dit altijd controleren door een boekhouder.</p>
-      </section>
+      </section>` : ''}
       <section class="card"><div class="card-head"><h2>Winstverdeling</h2></div>
         <div class="grid">${partners().map(p => `<label class="field"><span>${esc(p)} (%)</span><input type="number" min="0" max="100" step="1" data-share="${esc(p)}" value="${n(s.profit_shares?.[p] ?? 100 / partners().length)}"></label>`).join('')}</div>
         <p class="muted small-note">Samen altijd 100%: verander je het ene percentage, dan past het andere zich vanzelf aan. Wordt automatisch opgeslagen.</p>
       </section>
-      ${settingsTax()}
+      ${official ? settingsTax() : ''}
       ${settingsIntegrations()}
       <section class="card"><div class="card-head"><h2>App</h2></div>
         <p>Ingelogd als <b>${esc(store.user?.name)}</b>${store.user?.email ? ` (${esc(store.user.email)})` : ''}.</p>
@@ -963,7 +970,7 @@ function mobileTopHtml() {
   const title = home ? `<span class="mtop-word">LUMAR</span>` : `<span class="app-ico" style="--c:${m.color}">${icon(route.mod)}</span><b>${m.name}</b>`;
   return `<div class="mtop-row"><button class="mtop-title" data-action="apps-sheet" aria-label="Andere app kiezen">${title}<span class="mtop-caret">▾</span></button>
       <a class="avatar" data-go="instellingen" aria-label="Instellingen">${esc(store.user.name[0])}</a></div>
-    ${!home && m.pages.length > 1 ? `<div class="mtabs" role="tablist">${m.pages.map(([k, label]) => `<a data-page="${k}" class="${route.page === k ? 'on' : ''}" role="tab">${label}</a>`).join('')}</div>` : ''}`;
+    ${!home && pagesOf(route.mod).length > 1 ? `<div class="mtabs" role="tablist">${pagesOf(route.mod).map(([k, label]) => `<a data-page="${k}" class="${route.page === k ? 'on' : ''}" role="tab">${label}</a>`).join('')}</div>` : ''}`;
 }
 function mobileBarHtml() {
   const other = route.mod !== 'home' && !MBAR.includes(route.mod);
@@ -974,7 +981,7 @@ function mobileBarHtml() {
 function appsSheet() {
   openDialog(`<div class="modal-body sheet-body"><header><div><p class="eyebrow">Apps</p><h2>Waar wil je heen?</h2></div><button class="x" data-close aria-label="Sluiten">×</button></header>
     <div class="sheet-apps">${[['home', { name: 'Start', color: '#8a6a35' }], ...Object.entries(MODULES)].map(([k, m]) => `<a data-go="${k}" class="${route.mod === k ? 'on' : ''}" style="--c:${m.color}"><span class="tile-ico">${icon(k === 'home' ? 'apps' : k)}</span><b>${m.name}</b></a>`).join('')}</div>
-    ${route.mod !== 'home' && MODULES[route.mod].pages.length > 1 ? `<p class="eyebrow" style="margin-top:18px">${MODULES[route.mod].name}</p><div class="sheet-pages">${MODULES[route.mod].pages.map(([k, l]) => `<a data-go="${route.mod}/${k}" class="${route.page === k ? 'on' : ''}">${l}</a>`).join('')}</div>` : ''}
+    ${route.mod !== 'home' && pagesOf(route.mod).length > 1 ? `<p class="eyebrow" style="margin-top:18px">${MODULES[route.mod].name}</p><div class="sheet-pages">${pagesOf(route.mod).map(([k, l]) => `<a data-go="${route.mod}/${k}" class="${route.page === k ? 'on' : ''}">${l}</a>`).join('')}</div>` : ''}
   </div>`, 'sheet');
 }
 // Tabellen worden op de telefoon kaarten: elke cel krijgt de kolomnaam als label
@@ -990,6 +997,10 @@ function labelTables(root) {
   });
 }
 
+// Pagina's die alleen bestaan voor een officieel bedrijf
+const OFFICIAL_PAGES = ['vat', 'tax'];
+const pagesOf = mod => MODULES[mod].pages.filter(([k]) => isOfficial(S().settings) || !OFFICIAL_PAGES.includes(k));
+
 const moduleOf = p => Object.keys(MODULES).find(m => MODULES[m].pages.some(([k]) => k === p));
 
 const meHtml = () => `<div class="me" data-go="instellingen" title="Instellingen"><span class="avatar">${esc(store.user.name[0])}</span><div><b>${esc(store.user.name)}</b><small>${store.mode === 'demo' ? 'Demomodus' : 'Verbonden'}</small></div></div>`;
@@ -1001,7 +1012,7 @@ function sidebarHtml() {
       ${Object.entries(MODULES).map(([k, mod]) => {
         const open = route.mod === k;
         return `<a data-go="${k}" class="app ${open ? 'open' : ''}" style="--c:${mod.color}"><span class="app-ico">${icon(k)}</span><span>${mod.name}</span></a>
-        ${open ? `<div class="sub">${mod.pages.map(([pk, l]) => `<a data-go="${k}/${pk}" class="${pk === route.page ? 'on' : ''}">${l}</a>`).join('')}</div>` : ''}`;
+        ${open ? `<div class="sub">${pagesOf(k).map(([pk, l]) => `<a data-go="${k}/${pk}" class="${pk === route.page ? 'on' : ''}">${l}</a>`).join('')}</div>` : ''}`;
       }).join('')}
     </nav>
     <div class="sidebar-foot">${meHtml()}</div>`;
@@ -1650,7 +1661,7 @@ Object.assign(pages, {
     const v = vatReturn(st, yy, q);
     const daysLeft = daysBetween(today(), v.deadline);
     const years = [...new Set([cq.y, cq.y - 1, ...st.watches.filter(w => w.sale_date).map(w => +w.sale_date.slice(0, 4))])].sort((a, b) => b - a);
-    if (!st.settings.vat_enabled) return head('Btw-aangifte') + `<div class="banner">De btw-berekening staat uit (bijvoorbeeld omdat jullie de kleineondernemersregeling gebruiken). Zet hem aan bij Instellingen als jullie btw moeten afdragen.</div>`;
+    if (!vatOn(st.settings)) return head('Btw-aangifte') + `<div class="banner">${isOfficial(st.settings) ? 'De btw-berekening staat uit (bijvoorbeeld omdat jullie de kleineondernemersregeling gebruiken). Zet hem aan bij Instellingen als jullie btw moeten afdragen.' : 'Jullie zijn nog geen officieel bedrijf, dus er wordt geen btw berekend. Zodra jullie ingeschreven zijn bij de KvK, zet je dit om bij <a class="link" data-go="instellingen/settings">Instellingen → Bedrijfsvorm</a>.'}</div>`;
     const state = v.vat <= 0 ? ['ok', 'Niets af te dragen in dit kwartaal. Doe wel aangifte (met € 0) als de Belastingdienst die heeft klaargezet.'] : v.open <= 0.005 ? ['ok', `Afgedragen: ${euro(v.paid)}. Dit kwartaal is klaar.`] : today() <= v.to ? ['', `Het kwartaal loopt nog. Tot nu toe ${euro(v.vat)} btw.`] : daysLeft < 0 ? ['bad', `De deadline (${fdate(v.deadline)}) is ${-daysLeft} dagen verstreken. Nog af te dragen: ${euro(v.open)}.`] : ['bad', `Nog ${daysLeft} dagen: aangifte en betaling uiterlijk ${fdate(v.deadline)}. Nog af te dragen: ${euro(v.open)}.`];
     return head('Btw-aangifte', 'Per kwartaal, volgens de margeregeling. Aangifte doe je in Mijn Belastingdienst Zakelijk.', `<select class="period" data-uikey="vatYear">${options(years.map(x => [x, x]), yy)}</select>`) + `
       <div class="toolbar"><div class="tabs">${[1, 2, 3, 4].map(k => `<button class="${k === q ? 'on' : ''}" data-action="set-ui" data-key="vatQ" data-value="${k}">K${k} <small>${fdate(vatReturn(st, yy, k).deadline)}</small></button>`).join('')}</div></div>
@@ -1680,6 +1691,7 @@ Object.assign(pages, {
 
   tax() {
     const st = S(), cy = +today().slice(0, 4), y = +(ui.taxYear || cy), t = taxYear(y);
+    if (!isOfficial(st.settings)) return head('Belastingen') + `<div class="banner">Jullie zijn nog geen officieel bedrijf, dus de app rekent geen inkomstenbelasting of ondernemersaftrek uit. Zodra jullie ingeschreven zijn bij de KvK, zet je dit om bij <a class="link" data-go="instellingen/settings">Instellingen → Bedrijfsvorm</a>.</div>`;
     const pot = taxPot(st, y), bal = bankBalance(st);
     const years = [...new Set([cy, cy - 1])];
     return head('Belastingen', 'Belastingpotje en een indicatie van de inkomstenbelasting per vennoot.', `<select class="period" data-uikey="taxYear">${options(years.map(x => [x, x]), y)}</select>`) + `

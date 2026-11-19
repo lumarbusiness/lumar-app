@@ -529,3 +529,6 @@ td.clip { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-spa
 .sheet-pages a.on { background: var(--ink); color: #fff; border-color: var(--ink); }
 @media (max-width: 860px) { table.table.stack td[data-label=""]:not(:first-child) { justify-content: flex-end; } }
 @media (max-width: 860px) { .integ-row { flex-wrap: wrap; } .integ-row > div:first-child { min-width: 0; flex: 1 1 100%; } .integ-row .row-actions { flex-wrap: wrap; } }
+.choice { display: grid; gap: 12px; }
+.choice .check { align-items: flex-start; font-weight: 400; }
+.choice .check input { margin-top: 4px; }
