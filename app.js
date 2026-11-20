@@ -441,7 +441,7 @@ function expenseForm(preset = {}) {
         await store.update('watches', w.id, { extra_costs: round2(n(w.extra_costs) + amt), total_cost: round2(n(w.total_cost) + amt), history: hist(w, `Kosten toegevoegd: ${d.description} (${euro(amt)})`, d.date) });
       }
       if (d.payment === 'paid') await addBank({ date: d.date, description: d.description, amount: -amt, type: 'expense', reference_id: `expense:${e.id}` });
-      try { await preset.after?.(); } catch (err) { console.warn(err); }
+      try { await preset.after?.(e); } catch (err) { console.warn(err); }
       toast(cap ? 'Kosten bij de kostprijs opgeteld' : 'Uitgave opgeslagen');
     },
   });
@@ -630,7 +630,31 @@ async function deleteWatch(id) {
   await store.remove('watches', id);
   for (const it of S().items.filter(x => x.data?.watch_id === id)) await saveItem(it.module, it.id, { watch_id: null });
   if (w.batch_id) await syncBatch(w.batch_id);
+  await cleanupMailLinks();
   $('dialog.detail')?.close(); toast('Verwijderd'); render();
+}
+
+// Een hele bundel-inkoop in één keer verwijderen
+async function deleteBatch(batchId) {
+  const b = S().purchase_batches.find(x => x.id === batchId); if (!b) return;
+  const ws = S().watches.filter(w => w.batch_id === batchId);
+  const sold = ws.filter(w => w.status === 'sold');
+  const linked = S().expenses.filter(e => ws.some(w => w.id === e.watch_id) && (e.capitalized || e.payment_status === 'offset'));
+  if (!await confirmDialog('Hele bestelling verwijderen?', `De bestelling van ${fdate(b.purchase_date)}${b.platform ? ` via ${esc(b.platform)}` : ''} (${euro(b.total_cost)}) wordt definitief verwijderd, met alle ${ws.length} horloges en de bankmutaties${sold.length ? `, <b>ook ${sold.length} verkoop/verkopen</b>` : ''}${linked.length ? ` en ${linked.length} gekoppelde kostenpost(en)` : ''}. Gebruik dit alleen voor een foutieve invoer.`)) return;
+  for (const w of ws) {
+    for (const p of ['purchase', 'sale', 'refund']) await removeBankRef(`${p}:${w.id}`);
+    await removeBankPrefix(`customer-return:${w.id}`); await removeBankPrefix(`cr-sale:${w.id}`);
+    for (const e of S().expenses.filter(e => e.watch_id === w.id)) {
+      if (e.capitalized || e.payment_status === 'offset') { await removeBankRef(`expense:${e.id}`); await store.remove('expenses', e.id); }
+      else await store.update('expenses', e.id, { watch_id: null });
+    }
+    await store.remove('watches', w.id);
+    for (const it of S().items.filter(x => x.data?.watch_id === w.id)) await saveItem(it.module, it.id, { watch_id: null });
+  }
+  await removeBankRef(`batch:${batchId}`);
+  if (S().purchase_batches.some(x => x.id === batchId)) await store.remove('purchase_batches', batchId);
+  await cleanupMailLinks();
+  $('dialog.detail')?.close(); toast('Bestelling verwijderd'); render();
 }
 
 async function deleteExpense(id, fromForm = false) {
@@ -641,6 +665,7 @@ async function deleteExpense(id, fromForm = false) {
   if (e.capitalized && w) await store.update('watches', w.id, { extra_costs: round2(Math.max(0, n(w.extra_costs) - n(e.amount))), total_cost: round2(n(w.total_cost) - n(e.amount)), history: hist(w, `Kosten "${e.description}" verwijderd`) });
   await removeBankRef(`expense:${id}`); await store.remove('expenses', id);
   if (w?.batch_id) await syncBatch(w.batch_id);
+  await cleanupMailLinks();
   toast('Verwijderd'); if (!fromForm) render();
   return true;
 }
@@ -730,7 +755,7 @@ async function watchDetail(id) {
   if (w.status === 'sold') acts.push(`<button class="btn" data-action="customer-return" data-id="${id}">Retour van klant</button>`);
   if (['in_stock', 'incoming'].includes(w.status)) acts.push(`<button class="btn" data-action="supplier-return" data-id="${id}">Terug naar verkoper</button>`, `<button class="btn" data-action="write-off" data-id="${id}">Afschrijven</button>`);
   if (w.status !== 'written_off') acts.push(`<button class="btn" data-action="watch-cost" data-id="${id}">＋ Kosten</button>`);
-  acts.push(`<button class="btn" data-action="edit-watch" data-id="${id}">Bewerken</button>`, `<button class="btn ghost danger-text" data-action="delete-watch" data-id="${id}">Verwijderen</button>`);
+  acts.push(`<button class="btn" data-action="edit-watch" data-id="${id}">Bewerken</button>`, `<button class="btn ghost danger-text" data-action="delete-watch" data-id="${id}">Verwijderen</button>${w.batch_id ? `<button class="btn ghost danger-text" data-action="delete-batch" data-batch="${w.batch_id}">Hele bestelling verwijderen</button>` : ''}`);
   const dlg = openDialog(`<div class="modal-body wide">
     <header><div><div class="eyebrow">${esc(w.reference || 'Horloge')}</div><h2>${esc(wname(w))}</h2><div>${statusChip(w.status)}</div></div><button class="x" data-close aria-label="Sluiten">×</button></header>
     <div class="detail-grid">
@@ -858,6 +883,9 @@ const pages = {
           ${suppliers.map(x => `<tr><td><b>${esc(x.name)}</b></td><td>${esc(x.platforms)}</td><td class="r">${x.ws.length}</td><td class="r">${euro(sum(x.ws, w => w.total_cost))}</td><td class="r">${euro(avg(x.ws, w => w.total_cost))}</td><td>${fdate(x.last)}</td></tr>`).join('')}</tbody></table></div>
         <div class="card flush"><div class="card-head pad"><h2>Gemiddelde prijs per model</h2></div><table class="table"><thead><tr><th>Model</th><th class="r">Aantal</th><th class="r">Gem. kostprijs</th><th class="r">Laagste – hoogste</th><th class="r">Gem. verkoop</th><th class="r">Gem. winst</th></tr></thead><tbody>
           ${models.map(x => `<tr><td><b>${esc(x.name)}</b></td><td class="r">${x.ws.length}</td><td class="r">${euro(avg(x.ws, w => w.total_cost))}</td><td class="r">${x.ws.length > 1 && x.min !== x.max ? `${euro(x.min)} – ${euro(x.max)}` : '—'}</td><td class="r">${x.sold.length ? euro(avg(x.sold, w => w.sale_price)) : '—'}</td><td class="r">${x.sold.length ? signed(avg(x.sold, w => watchProfit(w, s))) : '—'}</td></tr>`).join('')}</tbody></table></div>
+      ${(bs => bs.length ? `<div class="card flush"><div class="card-head pad"><h2>Bestellingen (bundels)</h2></div><table class="table"><thead><tr><th>Datum</th><th>Leverancier / verkoper</th><th>Platform</th><th class="r">Horloges</th><th class="r">Totaal</th><th>Bon</th><th></th></tr></thead><tbody>
+        ${bs.map(b => { const ws = st.watches.filter(w => w.batch_id === b.id); return `<tr data-action="watch" data-id="${ws[0]?.id || ''}"><td>${fdate(b.purchase_date)}</td><td><b>${esc(ws.find(w => w.seller)?.seller || b.reference || '')}</b>${b.reference ? `<small class="muted"> ${esc(b.reference)}</small>` : ''}</td><td>${esc(b.platform || '')}</td><td class="r">${ws.length}</td><td class="r">${euro(b.total_cost)}</td><td>${b.receipt_path ? `<button class="link" data-action="file" data-path="${esc(b.receipt_path)}">📎 Bekijk</button>` : `<button class="link muted" data-action="receipt-add" data-table="purchase_batches" data-id="${b.id}">＋ Bon</button>`}</td><td class="r"><button class="btn small ghost danger-text" data-action="delete-batch" data-batch="${b.id}">Verwijderen</button></td></tr>`; }).join('')}
+      </tbody></table></div>` : '')(st.purchase_batches.filter(b => inPeriod(b.purchase_date, r.from, r.to)).sort((a, b) => String(b.purchase_date).localeCompare(String(a.purchase_date))))}
       <div class="card flush"><div class="card-head pad"><h2>Alle inkopen</h2></div><table class="table"><thead><tr><th>Datum</th><th>Horloge</th><th>Platform</th><th>Leverancier / verkoper</th><th class="r">Prijs</th><th class="r">Kostprijs</th><th>Status</th></tr></thead><tbody>
         ${list.map(w => `<tr data-action="watch" data-id="${w.id}"><td>${fdate(w.purchase_date)}</td><td><b>${esc(wname(w))}</b><small class="muted"> ${esc(w.reference || '')}</small></td><td>${esc(w.purchase_platform || '')}</td><td>${esc(w.seller || '')}</td><td class="r">${euro(w.purchase_price)}</td><td class="r">${euro(w.total_cost)}</td><td>${statusOf(w)}</td></tr>`).join('')}
       </tbody></table></div>`}`;
@@ -1727,6 +1755,28 @@ function cleanMail(text, oneLine = false) {
 }
 const mailSender = from => { const m = String(from || '').match(/^\s*"?([^"<]+?)"?\s*</); return (m ? m[1] : String(from || '')).trim(); };
 
+// Waar is een mail aan gekoppeld? (null = gekoppeld item bestaat niet meer)
+function mailTarget(m) {
+  if (!m.linked) return undefined;
+  const [table, rid] = String(m.linked).split(':');
+  const rec = receiptRecords(S()).find(r => r.table === table && r.id === rid);
+  if (rec) return { ...rec, label: `${rec.kind}: ${rec.description} · ${euro(rec.amount)} · ${fdate(rec.date)}` };
+  const w = table === 'watches' && watchById(rid);
+  if (w) return { table, id: rid, label: `Horloge: ${wname(w)}` };
+  return null;
+}
+async function unlinkMail(id, quiet = false) {
+  const m = itemById(id); if (!m) return;
+  const t = m.linked ? String(m.linked).split(':') : null;
+  if (t && mailTarget(m)) { const rec = (S()[t[0]] || []).find(x => x.id === t[1]); if (rec && rec.receipt_path && rec.receipt_path === m.linked_file) await store.update(t[0], t[1], { receipt_path: null }); }
+  await saveItem('mail', id, { status: 'new', linked: null, linked_file: null });
+  if (!quiet) toast('Mail ontkoppeld');
+}
+// Na verwijderen van een inkoop/uitgave: mails die daaraan hingen weer losmaken
+async function cleanupMailLinks() {
+  for (const m of items('mail')) if (m.status === 'linked' && m.linked && mailTarget(m) === null) await saveItem('mail', m.id, { status: 'new', linked: null, linked_file: null });
+}
+
 async function openMail(id) {
   const m = itemById(id);
   const files = mailFiles(m).filter(f => f.mime !== 'text/plain');
@@ -1734,7 +1784,10 @@ async function openMail(id) {
     ${m.amounts?.length ? `<div class="linked">${m.amounts.map(a => `<span class="chip">${euro(a)}</span>`).join('')}</div>` : ''}
     ${files.length ? `<div class="linked" style="margin-top:8px">${files.map(a => `<button class="chip" data-action="file" data-path="${esc(a.path)}">📎 ${esc(a.name)}</button>`).join('')}</div>` : ''}
     <pre class="mail-body">${esc(cleanMail(m.snippet))}…</pre>
-    <footer class="actions">${(m.status || 'new') === 'new' ? `<button class="btn primary" data-action="mail-link" data-id="${id}">Koppelen als bon</button><button class="btn" data-action="mail-expense" data-id="${id}">Nieuwe uitgave</button><button class="btn" data-action="mail-ignore" data-id="${id}">Negeren</button>` : `<span class="chip">${m.status === 'linked' ? '✓ Gekoppeld' : 'Genegeerd'}</span>`}</footer></div>`, 'detail');
+    ${m.status === 'linked' ? (t => `<div class="banner link-banner">${t ? `✓ Gekoppeld aan <b>${esc(t.label)}</b>` : t === null ? '⚠︎ Gekoppeld aan iets dat inmiddels verwijderd is' : '✓ Gekoppeld'}</div>`)(mailTarget(m)) : ''}
+    <footer class="actions">${(m.status || 'new') === 'new' ? `<button class="btn primary" data-action="mail-link" data-id="${id}">Koppelen als bon</button><button class="btn" data-action="mail-expense" data-id="${id}">Nieuwe uitgave</button><button class="btn" data-action="mail-ignore" data-id="${id}">Negeren</button>`
+      : m.status === 'linked' ? `${(t => t && t.table !== 'expenses' ? `<button class="btn" data-action="mail-goto" data-id="${id}">Bekijken</button>` : t ? `<button class="btn" data-action="mail-goto" data-id="${id}">Uitgave openen</button>` : '')(mailTarget(m))}<button class="btn danger-text" data-action="mail-unlink" data-id="${id}">Ontkoppelen</button>`
+      : `<span class="chip">Genegeerd</span><button class="btn" data-action="mail-reset" data-id="${id}">Terugzetten</button>`}</footer></div>`, 'detail');
   if (m.body_path) {
     try { const url = await store.fileUrl(m.body_path); const txt = url.startsWith('data:') ? atob(url.split(',')[1]) : await (await fetch(url)).text(); $('.mail-body', dlg).textContent = cleanMail(txt.replace(/^Van:.*\n.*\n.*\n\n/, '')); }
     catch { /* laat het fragment staan */ }
@@ -1902,6 +1955,7 @@ Object.assign(pages, {
     const all = items('mail'), f = ui.mailFilter;
     const q = (ui.mailSearch || '').toLowerCase();
     const list = all.filter(m => (m.status || 'new') === f || f === 'all').filter(m => !q || `${m.subject} ${m.from} ${m.snippet}`.toLowerCase().includes(q)).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    if (all.some(m => m.status === 'linked' && m.linked && mailTarget(m) === null)) setTimeout(async () => { await cleanupMailLinks(); render(); }, 0);
     const cnt = s => all.filter(m => (m.status || 'new') === s).length;
     const ready = integ?.gmail?.connected;
     return head('Mail', 'Bonnen en bevestigingen uit Gmail. Koppel ze aan een inkoop of uitgave.') + itemsBanner() + `
@@ -1911,7 +1965,7 @@ Object.assign(pages, {
       ${list.length ? `<div class="card flush mail-list">${list.slice(0, 200).map(m => `<div class="mail-row ${(m.status || 'new') !== 'new' ? 'done' : ''}" data-action="mail-open" data-id="${m.id}">
           <div class="mail-from">${esc(mailSender(m.from))}</div>
           <div class="mail-main"><b>${esc(m.subject || '(geen onderwerp)')}</b> <span class="muted">— ${esc(cleanMail(m.snippet, true).slice(0, 160))}</span></div>
-          <div class="mail-meta">${mailFiles(m).some(f => f.mime !== 'text/plain') ? '<span title="Bijlage">📎</span>' : ''}${m.amounts?.length ? `<span class="badge">${euro(m.amounts[0])}</span>` : ''}${m.status === 'linked' ? '<span class="chip ps-posted">gekoppeld</span>' : ''}<small>${fdate(String(m.date).slice(0, 10))}</small></div>
+          <div class="mail-meta">${mailFiles(m).some(f => f.mime !== 'text/plain') ? '<span title="Bijlage">📎</span>' : ''}${m.amounts?.length ? `<span class="badge">${euro(m.amounts[0])}</span>` : ''}${m.status === 'linked' ? (t => t === null ? '<span class="chip warn">koppeling weg</span>' : `<span class="chip ps-posted" title="${esc(t?.label || '')}">gekoppeld${t ? ' · ' + esc(t.kind || 'item') : ''}</span>`)(mailTarget(m)) : ''}<small>${fdate(String(m.date).slice(0, 10))}</small></div>
         </div>`).join('')}</div>${list.length > 200 ? '<p class="muted">De nieuwste 200 worden getoond. Gebruik de zoekbalk om oudere mails te vinden.</p>' : ''}` : empty(ready ? 'Geen mails in deze lijst.' : 'Nog geen mails binnengekomen.')}`;
   },
 });
@@ -2041,9 +2095,18 @@ document.addEventListener('click', async e => {
       case 'od-clear': od.search = null; ui.odQuery = ''; render(); break;
       case 'od-file': case 'od-dl': { const win = window.open('', '_blank'); try { const r = await store.invoke('lumar-integrations', { action: 'od-download', itemId: id }); const u = a.dataset.action === 'od-dl' ? r.url : (r.webUrl || r.url); if (win && u) win.location = u; else win?.close(); } catch (err) { win?.close(); throw err; } break; }
       case 'od-mkdir': openForm({ eyebrow: 'OneDrive', title: 'Nieuwe map', submit: 'Aanmaken', fields: [{ name: 'name', label: 'Naam van de map', required: true, wide: true }], onSubmit: async d => { await store.invoke('lumar-integrations', { action: 'od-mkdir', parentId: odCur().id || null, name: d.name }); await odLoad(odCur().id, true); toast('Map aangemaakt'); } }); break;
-      case 'mail-expense': { $('dialog.detail')?.close(); const m = itemById(id); const f = mailFiles(m).find(x => x.mime !== 'text/plain') || mailFiles(m)[0]; expenseForm({ description: m.subject, amount: m.amounts?.[0], receipt_path: f?.path, after: () => saveItem('mail', id, { status: 'linked', linked_file: f?.path }) }); break; }
+      case 'mail-expense': { $('dialog.detail')?.close(); const m = itemById(id); const f = mailFiles(m).find(x => x.mime !== 'text/plain') || mailFiles(m)[0]; expenseForm({ description: m.subject, amount: m.amounts?.[0], receipt_path: f?.path, after: e => saveItem('mail', id, { status: 'linked', linked: e?.id ? `expenses:${e.id}` : null, linked_file: f?.path }) }); break; }
       case 'mail-ignore': $('dialog.detail')?.close(); await saveItem('mail', id, { status: 'ignored' }); render(); break;
-      case 'mail-reset': await saveItem('mail', id, { status: 'new' }); render(); break;
+      case 'mail-reset': $('dialog.detail')?.close(); await saveItem('mail', id, { status: 'new' }); render(); break;
+      case 'mail-unlink': $('dialog.detail')?.close(); await unlinkMail(id); render(); break;
+      case 'mail-goto': {
+        const t = mailTarget(itemById(id)); $('dialog.detail')?.close(); if (!t) break;
+        if (t.table === 'expenses') editExpenseForm(t.id);
+        else if (t.table === 'watches') watchDetail(t.id);
+        else { const w = S().watches.find(x => x.batch_id === t.id); if (w) watchDetail(w.id); }
+        break;
+      }
+      case 'delete-batch': await deleteBatch(a.dataset.batch); break;
       case 'gmail-setup': await gmailSetup(); break;
       case 'onedrive-connect': { const r = await store.invoke('lumar-integrations', { action: 'onedrive-connect' }); location.href = r.url; break; }
       case 'onedrive-sync': { toast('Bezig met synchroniseren…'); let total = 0; for (let i = 0; i < 20; i++) { const r = await store.invoke('lumar-integrations', { action: 'onedrive-sync' }); total += r.uploaded || 0; if (!r.remaining) break; } toast(`OneDrive bijgewerkt: ${total} bestand(en)`); break; }
