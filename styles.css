@@ -574,3 +574,4 @@ td.clip { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-spa
 *::-webkit-scrollbar { width: 0; height: 0; display: none; }
 .page-head .search.small { max-width: 260px; min-height: 38px; }
 @media (max-width: 860px) { .page-head .search.small { max-width: none; flex: 1 1 100%; } }
+.ai-banner { background: linear-gradient(135deg, #f6efe0, #efe4cc); border-color: #dcc9a0; margin: 4px 0 14px; }

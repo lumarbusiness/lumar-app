@@ -237,11 +237,11 @@ function purchaseForm(opts = {}) {
       { name: 'paid_by', label: 'Betaald door', type: 'select', options: partners(), value: store.user?.name, show: d => d.payment === 'private' },
       { name: 'vat_scheme', label: 'Btw-regeling bij verkoop', type: 'select', options: [['margin', 'Margeregeling (gekocht van particulier)'], ['none', 'Geen btw']], show: () => vatOn(S().settings) },
       { name: 'photo', label: 'Foto', type: 'file', accept: 'image/*', show: d => d.mode === 'single' },
-      { name: 'receipt', label: 'Bon / bestelbevestiging', type: 'file' },
+      { name: 'receipt', label: 'Bon / bestelbevestiging', type: 'file', hint: opts.receipt_path ? '✓ De gescande bon wordt al bewaard. Kies alleen een bestand als je hem wilt vervangen.' : '' },
       { name: 'notes', label: 'Notities', type: 'textarea', wide: true, show: d => d.mode === 'single' },
     ],
     onInput: (d, form) => { form.closest('dialog').classList.toggle('xl', d.mode === 'batch'); updateBatch(d, form); },
-    onSubmit: async (d, form) => { const r = d.mode === 'batch' ? await saveBatch(d, form) : await saveSingle(d); if (r !== false) await opts.after?.(); return r; },
+    onSubmit: async (d, form) => { if (!d.receipt && opts.receipt_path) d._receipt_path = opts.receipt_path; const r = d.mode === 'batch' ? await saveBatch(d, form) : await saveSingle(d); if (r !== false) await opts.after?.(r); return r; },
   });
   const rowsEl = $('.batch-rows', f.form);
   f.form.addEventListener('change', async e => {
@@ -258,6 +258,59 @@ function purchaseForm(opts = {}) {
     if (del && rowsEl.children.length > 2) { del.closest('.batch-row').remove(); renumber(); updateBatch(formValues(f.form), f.form); }
   });
   const renumber = () => [...rowsEl.children].forEach((r, i) => { r.dataset.row = i; $('.batch-no', r).textContent = i + 1; });
+  // vooraf invullen (bijv. vanuit een gescande bon)
+  if (opts.values) {
+    const el = f.form.elements;
+    if (opts.values.mode) { el.mode.value = opts.values.mode; f.form.dispatchEvent(new Event('input', { bubbles: true })); }
+    for (const [k, v] of Object.entries(opts.values)) if (k !== 'mode' && el[k] && v !== undefined && v !== null && v !== '') el[k].value = v;
+  }
+  if (opts.rows?.length) {
+    rowsEl.innerHTML = opts.rows.map((_, i) => watchFields(i)).join('');
+    opts.rows.forEach((r, i) => {
+      const row = rowsEl.children[i];
+      $('.b-brand', row).innerHTML = brandOptions(r.brand || ''); $('.b-brand', row).value = r.brand || '';
+      $('.b-model', row).innerHTML = modelOptions(r.brand || '', r.model || ''); $('.b-model', row).value = r.model || '';
+      $('.b-ref', row).value = r.reference || ''; if (r.price != null) $('.b-price', row).value = r.price;
+    });
+  }
+  if (opts.values || opts.rows) { f.form.dispatchEvent(new Event('input', { bubbles: true })); updateBatch(formValues(f.form), f.form); }
+  return f;
+}
+
+// ───────────── Bon scannen: AI leest de bon en vult de inkoop in ─────────────
+async function scanReceipt({ file, mailId } = {}) {
+  let path = null;
+  if (file) {
+    if (file.size > 15 * 1024 * 1024) { toast('Bestand is te groot (max. 15 MB)', 'bad'); return; }
+    toast('Bon uploaden…');
+    path = await store.upload(file.type.startsWith('image/') ? await compressImage(file, 2000) : file, 'receipts');
+  }
+  toast('Bon wordt gelezen… (een paar seconden)');
+  const r = await store.invoke('lumar-ai', mailId ? { action: 'scan-receipt', mail_id: mailId } : { action: 'scan-receipt', path });
+  const o = r.order || {}, receipt_path = path || r.source_path;
+  const rows = [];
+  for (const it of o.items || []) for (let q = 0; q < Math.max(1, Math.min(50, +it.quantity || 1)); q++) rows.push({ brand: (it.brand || '').trim(), model: (it.model || '').trim(), reference: it.reference || '', price: round2(n(it.unit_price)) });
+  if (!rows.length) { toast('Er stonden geen horloges op de bon', 'bad'); return; }
+  const platform = PLATFORMS.find(p => p.toLowerCase() === String(o.platform || '').toLowerCase()) || PLATFORMS.find(p => String(o.supplier || '').toLowerCase().includes(p.toLowerCase())) || 'Leverancier';
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(o.order_date || '') ? o.order_date : today();
+  const shared = round2(n(o.shipping) + n(o.buyer_protection) + n(o.other_costs));
+  const after = mailId ? async res => { if (res?.id) await saveItem('mail', mailId, { status: 'linked', linked: `${res.table}:${res.id}`, linked_file: receipt_path }); } : undefined;
+  const intro = `Ingevuld door de AI vanaf de bon${o.supplier ? ` van ${esc(o.supplier)}` : ''}. Controleer alles even voordat je opslaat.${o.notes ? `<br><b>Let op:</b> ${esc(o.notes)}` : ''}`;
+  let f;
+  if (rows.length === 1) {
+    const x = rows[0];
+    f = purchaseForm({ prefill: { brand: x.brand, model: x.model, purchase_price: round2(x.price - n(o.discount)) }, receipt_path, after,
+      values: { mode: 'single', reference: x.reference, purchase_date: date, platform, seller: o.supplier || '', extra_costs: shared || '' } });
+  } else {
+    f = purchaseForm({ receipt_path, after, rows,
+      values: { mode: 'batch', purchase_date: date, platform, seller_b: o.supplier || '', reference_no: o.order_number || '', paid_total: o.total ?? '', discount: n(o.discount) || '', shipping: n(o.shipping) || 0, protection: n(o.buyer_protection) || '', other: n(o.other_costs) || '', alloc_protection: 'equal' } });
+  }
+  const ib = $('header', f.form); if (ib) ib.insertAdjacentHTML('afterend', `<div class="banner ai-banner">✨ ${intro}</div>`);
+}
+function pickReceipt() {
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*,application/pdf';
+  inp.onchange = () => inp.files[0] && scanReceipt({ file: inp.files[0] }).catch(err => toast(err.message, 'bad'));
+  inp.click();
 }
 
 function batchData(d, form) {
@@ -308,7 +361,7 @@ async function saveSingle(d) {
   if (!d.brand || d.brand === '__new' || !d.model || d.model === '__new') { toast('Kies een merk en model', 'bad'); return false; }
   await addToCatalog(d.brand, d.model);
   const total = round2(n(d.purchase_price) + n(d.extra_costs));
-  const [photo_path, receipt_path] = await Promise.all([uploadPhoto(d.photo), uploadReceipt(d.receipt)]);
+  const [photo_path, receipt_path] = await Promise.all([uploadPhoto(d.photo), d.receipt ? uploadReceipt(d.receipt) : (d._receipt_path || null)]);
   const w = await store.insert('watches', {
     brand: d.brand.trim(), model: d.model.trim(), reference: d.reference, serial: d.serial, year: d.year,
     condition: d.condition, box_papers: d.box_papers || null, notes: d.notes, photo_path, receipt_path,
@@ -320,6 +373,7 @@ async function saveSingle(d) {
   });
   if (d.payment === 'paid') await addBank({ date: d.purchase_date, description: `Inkoop ${wname(w)}`, amount: -total, type: 'purchase', reference_id: `purchase:${w.id}` });
   toast(`${wname(w)} toegevoegd`);
+  return { table: 'watches', id: w.id };
 }
 
 async function saveBatch(d, form) {
@@ -334,7 +388,7 @@ async function saveBatch(d, form) {
   const idx = rows.map(r => b.rows.indexOf(r));
   const total = b.total;
   for (const r of rows) await addToCatalog(r.brand, r.model);
-  const receipt_path = await uploadReceipt(d.receipt);
+  const receipt_path = d.receipt ? await uploadReceipt(d.receipt) : (d._receipt_path || null);
   const batch = await store.insert('purchase_batches', {
     purchase_date: d.purchase_date, platform: d.platform, reference: d.reference_no, shipping_costs: n(d.shipping),
     buyer_protection: n(d.protection), other_costs: n(d.other), allocation_method: d.allocation === 'manual' ? 'manual' : `per_type:${d.alloc_shipping}/${d.alloc_protection}/${d.alloc_other}`,
@@ -351,6 +405,7 @@ async function saveBatch(d, form) {
   }
   if (d.payment === 'paid') await addBank({ date: d.purchase_date, description: `${d.platform}-bestelling · ${rows.length} horloges`, amount: -total, type: 'purchase', reference_id: `batch:${batch.id}` });
   toast(`Bundel met ${rows.length} horloges opgeslagen`);
+  return { table: 'purchase_batches', id: batch.id };
 }
 
 // Verkoop
@@ -851,7 +906,7 @@ const pages = {
       .filter(w => !q || `${w.brand} ${w.model} ${w.reference} ${w.serial} ${w.notes}`.toLowerCase().includes(q))
       .sort((a, b) => String(b.purchase_date).localeCompare(String(a.purchase_date)));
     const c = calc(st);
-    return head('Voorraad', `${c.stockCount} ${c.stockCount === 1 ? 'horloge' : 'horloges'} actief · kostprijs ${euro(c.stock)} · geschat ${euro(c.stockEstimated)}`, '<button class="btn primary" data-action="purchase">＋ Inkoop</button>') + `
+    return head('Voorraad', `${c.stockCount} ${c.stockCount === 1 ? 'horloge' : 'horloges'} actief · kostprijs ${euro(c.stock)} · geschat ${euro(c.stockEstimated)}`, '<button class="btn" data-action="scan-receipt">✨ Bon scannen</button><button class="btn primary" data-action="purchase">＋ Inkoop</button>') + `
       <div class="toolbar"><input class="search" id="stockSearch" placeholder="Zoek op merk, model, referentie…" value="${esc(ui.stockSearch)}">
         <div class="tabs">${filters.map(([k, l]) => `<button class="${ui.stockFilter === k ? 'on' : ''}" data-filter="${k}">${l} <small>${count(k)}</small></button>`).join('')}</div></div>
       ${list.length ? `<div class="watch-grid">${list.map(w => {
@@ -876,7 +931,7 @@ const pages = {
     const suppliers = group(list, who).map(([name, ws]) => ({ name, ws, platforms: [...new Set(ws.map(w => w.purchase_platform).filter(Boolean))].join(', '), last: ws.map(w => w.purchase_date).sort().pop() })).sort((a, b) => b.ws.length - a.ws.length || sum(b.ws, w => w.total_cost) - sum(a.ws, w => w.total_cost));
     const models = group(list, w => `${w.brand} ${w.model}`).map(([name, ws]) => { const sold = ws.filter(w => w.status === 'sold'); return { name, ws, sold, min: Math.min(...ws.map(w => n(w.total_cost))), max: Math.max(...ws.map(w => n(w.total_cost))) }; }).sort((a, b) => b.ws.length - a.ws.length || a.name.localeCompare(b.name));
     const statusOf = w => statusChip(w.status) + (w.batch_id ? ' <span class="chip">bundel</span>' : '');
-    return head('Inkopen', `${list.length} ${list.length === 1 ? 'horloge' : 'horloges'} ingekocht · ${r.label}`, `<input class="search small" id="purchSearch" placeholder="Zoek merk, model, leverancier…" value="${esc(ui.purchQ || '')}">${periodSelect(ui.purchPeriod || 'year', 'purchPeriod')}<button class="btn primary" data-action="purchase">＋ Inkoop</button>`) + `
+    return head('Inkopen', `${list.length} ${list.length === 1 ? 'horloge' : 'horloges'} ingekocht · ${r.label}`, `<input class="search small" id="purchSearch" placeholder="Zoek merk, model, leverancier…" value="${esc(ui.purchQ || '')}">${periodSelect(ui.purchPeriod || 'year', 'purchPeriod')}<button class="btn" data-action="scan-receipt">✨ Bon scannen</button><button class="btn primary" data-action="purchase">＋ Inkoop</button>`) + `
       <section class="stats">${stat('Ingekocht', String(list.length), (k => `${k} ${k === 1 ? 'bestelling' : 'bestellingen'}`)(new Set(list.map(w => w.batch_id || w.id)).size))}${stat('Totale kostprijs', euro(sum(list, w => w.total_cost)), `waarvan ${euro(sum(list, w => w.extra_costs))} extra kosten`)}${stat('Gem. kostprijs', list.length ? euro(avg(list, w => w.total_cost)) : '—', 'per horloge')}${stat('Leveranciers / verkopers', String(suppliers.length), suppliers[0] ? `meest: ${esc(suppliers[0].name)}` : '')}</section>
       ${!list.length ? empty(q ? 'Niets gevonden.' : 'Nog geen inkopen in deze periode.') : `
         <div class="card flush"><div class="card-head pad"><h2>Per leverancier / verkoper</h2></div><table class="table"><thead><tr><th>Naam</th><th>Platform</th><th class="r">Aantal</th><th class="r">Totaal</th><th class="r">Gem. kostprijs</th><th>Laatste</th></tr></thead><tbody>
@@ -1785,7 +1840,7 @@ async function openMail(id) {
     ${files.length ? `<div class="linked" style="margin-top:8px">${files.map(a => `<button class="chip" data-action="file" data-path="${esc(a.path)}">📎 ${esc(a.name)}</button>`).join('')}</div>` : ''}
     <pre class="mail-body">${esc(cleanMail(m.snippet))}…</pre>
     ${m.status === 'linked' ? (t => `<div class="banner link-banner">${t ? `✓ Gekoppeld aan <b>${esc(t.label)}</b>` : t === null ? '⚠︎ Gekoppeld aan iets dat inmiddels verwijderd is' : '✓ Gekoppeld'}</div>`)(mailTarget(m)) : ''}
-    <footer class="actions">${(m.status || 'new') === 'new' ? `<button class="btn primary" data-action="mail-link" data-id="${id}">Koppelen als bon</button><button class="btn" data-action="mail-expense" data-id="${id}">Nieuwe uitgave</button><button class="btn" data-action="mail-ignore" data-id="${id}">Negeren</button>`
+    <footer class="actions">${(m.status || 'new') === 'new' ? `<button class="btn primary" data-action="mail-scan" data-id="${id}">✨ Inkoop maken van deze bon</button><button class="btn" data-action="mail-link" data-id="${id}">Koppelen als bon</button><button class="btn" data-action="mail-expense" data-id="${id}">Nieuwe uitgave</button><button class="btn" data-action="mail-ignore" data-id="${id}">Negeren</button>`
       : m.status === 'linked' ? `${(t => t && t.table !== 'expenses' ? `<button class="btn" data-action="mail-goto" data-id="${id}">Bekijken</button>` : t ? `<button class="btn" data-action="mail-goto" data-id="${id}">Uitgave openen</button>` : '')(mailTarget(m))}<button class="btn danger-text" data-action="mail-unlink" data-id="${id}">Ontkoppelen</button>`
       : `<span class="chip">Genegeerd</span><button class="btn" data-action="mail-reset" data-id="${id}">Terugzetten</button>`}</footer></div>`, 'detail');
   if (m.body_path) {
@@ -2075,6 +2130,8 @@ document.addEventListener('click', async e => {
   try {
     switch (a.dataset.action) {
       case 'apps-sheet': appsSheet(); break;
+      case 'scan-receipt': pickReceipt(); break;
+      case 'mail-scan': $('dialog.detail')?.close(); await scanReceipt({ mailId: id }); break;
       case 'cat-add-brand': { const v = $('#catNewBrand').value.trim(); if (!v) break; await addToCatalog(v); toast(`${v} toegevoegd`); render(); break; }
       case 'cat-add-model': { const inp = document.querySelector(`[data-cat-model="${CSS.escape(a.dataset.brand)}"]`); const v = inp?.value.trim(); if (!v) break; await addToCatalog(a.dataset.brand, v); render(); break; }
       case 'cat-del-model': { const c = catalog(); c[a.dataset.brand] = (c[a.dataset.brand] || []).filter(m => m !== a.dataset.model); await saveCatalog(c); render(); break; }
