@@ -575,3 +575,7 @@ td.clip { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-spa
 .page-head .search.small { max-width: 260px; min-height: 38px; }
 @media (max-width: 860px) { .page-head .search.small { max-width: none; flex: 1 1 100%; } }
 .ai-banner { background: linear-gradient(135deg, #f6efe0, #efe4cc); border-color: #dcc9a0; margin: 4px 0 14px; }
+.banktx li { align-items: flex-start; }
+.banktx li > div { flex: 1; min-width: 0; }
+.tx-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.tx-acts .btn { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }

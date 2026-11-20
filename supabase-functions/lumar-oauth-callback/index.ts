@@ -1,11 +1,14 @@
-// LUMAR – terugkeerpunt na inloggen bij Microsoft (OneDrive), Instagram of TikTok. Wordt door de browser aangeroepen.
-import { admin, APP_URL, MS_AUTH, MS_SCOPES, CALLBACK_URL, IG_GRAPH, tiktokToken, TT_API } from '../_shared/common.ts';
+// LUMAR – terugkeerpunt na inloggen bij Microsoft (OneDrive), Instagram, TikTok of Knab. Wordt door de browser aangeroepen.
+import { admin, APP_URL, MS_AUTH, MS_SCOPES, CALLBACK_URL, IG_GRAPH, tiktokToken, TT_API, eb, BANK_STATE_ID } from '../_shared/common.ts';
 
-const back = (q: Record<string, string>) => Response.redirect(`${APP_URL}?${new URLSearchParams(q)}#instellingen/settings`, 302);
+const redirect = (hash: string, q: Record<string, string>) => Response.redirect(`${APP_URL}?${new URLSearchParams(q)}#${hash}`, 302);
 
 Deno.serve(async req => {
   const url = new URL(req.url);
   const code = (url.searchParams.get('code') || '').replace(/#_$/, ''), state = url.searchParams.get('state');
+  let hash = 'instellingen/settings';
+  if (state) { const { data: pv } = await admin().from('oauth_states').select('provider').eq('nonce', state).maybeSingle(); if (pv?.provider === 'knab') hash = 'financien/bank'; }
+  const back = (q: Record<string, string>) => redirect(hash, q);
   if (url.searchParams.get('error')) return back({ koppelfout: url.searchParams.get('error_description') || url.searchParams.get('error_reason') || url.searchParams.get('error')! });
   if (!code || !state) return back({ koppelfout: 'Onvolledig antwoord bij het koppelen' });
   const db = admin();
@@ -13,7 +16,7 @@ Deno.serve(async req => {
   await db.from('oauth_states').delete().eq('nonce', state);
   if (!st || Date.now() - new Date(st.created_at).getTime() > 15 * 60e3) return back({ koppelfout: 'Koppelverzoek verlopen, probeer opnieuw' });
   try {
-    const row = await (st.provider === 'instagram' ? instagram(code) : st.provider === 'tiktok' ? tiktok(code) : onedrive(code));
+    const row = await (st.provider === 'instagram' ? instagram(code) : st.provider === 'tiktok' ? tiktok(code) : st.provider === 'knab' ? knab(code, db) : onedrive(code));
     const { error } = await db.from('integrations').upsert({ ...row, connected_by: st.user_id, updated_at: new Date().toISOString() });
     if (error) throw error;
     return back({ connected: row.provider });
@@ -50,4 +53,14 @@ async function tiktok(code: string) {
   const me = await fetch(`${TT_API}/user/info/?fields=display_name`, { headers: { Authorization: `Bearer ${t.access_token}` } }).then(r => r.json()).catch(() => ({}));
   return { provider: 'tiktok', account: me?.data?.user?.display_name || 'TikTok', access_token: t.access_token, refresh_token: t.refresh_token,
     expires_at: new Date(Date.now() + t.expires_in * 1000).toISOString() };
+}
+
+async function knab(code: string, db: any) {
+  const s = await eb('/sessions', { method: 'POST', body: { code } });
+  const accounts = (s.accounts || []).map((a: any) => ({ uid: a.uid, iban: a.account_id?.iban || a.all_account_ids?.find((x: any) => x.scheme_name === 'IBAN')?.identification || '', name: a.name || a.product || '' }));
+  if (!accounts.length) throw new Error('Knab gaf geen rekening terug. Probeer opnieuw en vink de rekening aan.');
+  const old = await db.from('items').select('data').eq('id', BANK_STATE_ID).maybeSingle();
+  await db.from('items').upsert({ id: BANK_STATE_ID, module: 'bankstate', data: { ...(old.data?.data || {}), accounts, valid_until: s.access?.valid_until, error: null }, updated_at: new Date().toISOString() });
+  const ib = accounts[0].iban;
+  return { provider: 'knab', account: `Knab${ib ? ' · ' + ib.replace(/(.{4})/g, '$1 ').trim() : ''}`, access_token: s.session_id, refresh_token: JSON.stringify(accounts), expires_at: s.access?.valid_until || null };
 }

@@ -277,6 +277,83 @@ function purchaseForm(opts = {}) {
   return f;
 }
 
+// ───────────── Knab (via Enable Banking): de echte bij- en afschrijvingen ─────────────
+const BANK_STATE_ID = '00000000-0000-4000-8000-00000000b41a';
+const bankState = () => (S().items || []).find(i => i.id === BANK_STATE_ID)?.data || {};
+const bankTxs = () => (S().items || []).filter(i => i.module === 'banktx').map(i => ({ ...i.data, id: i.id })).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+const fdt = d => d ? new Date(d).toLocaleString('nl-NL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+const setTx = (id, matched) => saveItem('banktx', id, { matched });
+function txSuggestions(t) {
+  const used = new Set(bankTxs().map(x => x.matched).filter(m => m?.startsWith('bank_entries:')).map(m => m.split(':')[1]));
+  const d = new Date(t.date + 'T12:00').getTime(), near = x => Math.abs(new Date(x + 'T12:00').getTime() - d) <= 14 * 864e5;
+  const same = v => Math.abs(round2(v) - round2(t.amount)) < 0.005;
+  const entries = S().bank_entries.filter(e => !used.has(e.id) && same(n(e.amount)) && near(e.date)).map(e => ({ kind: 'entry', id: e.id, label: e.description }));
+  const pend = pendingPayments(S()).filter(p => same((p.direction === 'in' ? 1 : -1) * p.amount)).map(p => ({ kind: 'pending', id: p.id, label: p.description }));
+  return [...entries, ...pend].slice(0, 3);
+}
+let bankSyncing = false, bankAutoDone = false;
+async function bankSync(full = false, quiet = false) {
+  if (bankSyncing) return;
+  bankSyncing = true; render();
+  if (!quiet) toast('Knab bijwerken…');
+  try {
+    const r = await store.invoke('lumar-bank', { action: 'sync', full });
+    await store.reload();
+    if (!quiet || r.added) toast(r.added ? `${r.added} nieuwe ${r.added === 1 ? 'transactie' : 'transacties'} van Knab` : 'Knab is bijgewerkt, niets nieuws');
+  } catch (e) { await store.reload().catch(() => {}); if (!quiet) toast(e.message, 'bad'); }
+  finally { bankSyncing = false; render(); }
+}
+function maybeAutoBankSync() {
+  if (bankAutoDone || !integ?.knab?.connected) return;
+  bankAutoDone = true;
+  const last = bankState().last_sync;
+  if (!last || Date.now() - new Date(last).getTime() > 6 * 3600e3) bankSync(false, true);
+}
+function knabCard() {
+  const st = S(), x = integ?.knab, bs = bankState();
+  if (!x?.connected) return `<section class="card"><div class="card-head"><h2>Knab-rekening</h2></div><p class="muted">Koppel jullie Knab-rekening. Dan komen alle echte bij- en afschrijvingen hier vanzelf binnen en zie je meteen of de app klopt met de bank. De app kan alleen meelezen, nooit geld overmaken.</p><button class="btn primary" data-action="bank-connect" ${!integ || integ.unavailable ? 'disabled' : ''}>Koppel Knab</button></section>`;
+  const appBal = bankBalance(st), diff = bs.balance == null ? null : round2(bs.balance - appBal);
+  const days = bs.valid_until ? Math.ceil((new Date(bs.valid_until) - Date.now()) / 864e5) : null;
+  const open = bankTxs().filter(t => !t.matched), show = ui.bankAll ? open : open.slice(0, 15);
+  const ok = diff !== null && Math.abs(diff) < 0.01;
+  return `<section class="card"><div class="card-head"><h2>Knab-rekening</h2><div class="row-actions"><button class="btn small" data-action="bank-sync" ${bankSyncing ? 'disabled' : ''}>${bankSyncing ? 'Bezig…' : '↻ Nu ophalen'}</button></div></div>
+    ${bs.error ? `<div class="banner warn">${esc(bs.error)} <button class="btn small" data-action="bank-connect">Opnieuw koppelen</button></div>` : ''}
+    ${days !== null && days <= 14 ? `<div class="banner warn">De toestemming bij Knab verloopt ${days <= 0 ? 'vandaag' : `over ${days} ${days === 1 ? 'dag' : 'dagen'}`}. Klik op <b>Opnieuw koppelen</b> en keur het goed bij Knab. <button class="btn small" data-action="bank-connect">Opnieuw koppelen</button></div>` : ''}
+    <section class="stats">${stat('Saldo bij Knab', bs.balance == null ? '—' : euro(bs.balance), bs.balance_date ? `stand ${fdate(String(bs.balance_date).slice(0, 10))}` : '')}${stat('Saldo volgens de app', euro(appBal))}${stat('Verschil', diff === null ? '—' : ok ? '<span class="good">✓ Klopt</span>' : signed(diff), diff !== null && !ok ? 'verwerk de transacties hieronder' : '')}${stat('Te verwerken', String(open.length))}</section>
+    <p class="muted small">${esc(x.account || 'Knab')} · laatst opgehaald ${fdt(bs.last_sync)}${bs.valid_until ? ` · toestemming tot ${fdate(String(bs.valid_until).slice(0, 10))}` : ''}</p>
+    ${open.length ? `<ul class="list banktx">${show.map(txRow).join('')}</ul>${open.length > show.length ? `<button class="link" data-action="bank-all">Toon alle ${open.length}</button>` : ''}` : empty(bankTxs().length ? 'Alle Knab-transacties zijn verwerkt.' : 'Nog geen transacties opgehaald. Klik op ↻ Nu ophalen.')}
+  </section>`;
+}
+function txRow(t) {
+  return `<li><div><b>${esc(t.counterparty || (t.amount > 0 ? 'Bijschrijving' : 'Afschrijving'))}</b><small>${fdate(t.date)}${t.description ? ` · ${esc(t.description.slice(0, 100))}` : ''}</small>
+    <div class="tx-acts">${txSuggestions(t).map(g => `<button class="btn small primary" data-action="tx-match" data-id="${t.id}" data-kind="${g.kind}" data-ref="${esc(g.id)}">✓ ${g.kind === 'pending' ? 'Verwerk' : 'Hoort bij'}: ${esc(g.label.slice(0, 40))}</button>`).join('')}<button class="btn small" data-action="tx-book" data-id="${t.id}">Boeken als…</button><button class="btn small ghost" data-action="tx-ignore" data-id="${t.id}">Negeren</button></div></div>
+    <span class="${t.amount >= 0 ? 'good' : 'bad'}">${t.amount >= 0 ? '+' : '−'}${euro(Math.abs(t.amount))}</span></li>`;
+}
+function txBookForm(id) {
+  const t = bankTxs().find(x => x.id === id); if (!t) return;
+  const amt = round2(Math.abs(t.amount)), desc = [t.counterparty, t.description].filter(Boolean).join(' · ').slice(0, 120);
+  const used = new Set(bankTxs().map(x => x.matched).filter(m => m?.startsWith('bank_entries:')).map(m => m.split(':')[1]));
+  const existing = S().bank_entries.filter(e => !used.has(e.id) && Math.sign(n(e.amount)) === Math.sign(t.amount)).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 60);
+  const opts = t.amount < 0
+    ? [['expense', 'Uitgave (kosten, verzending, abonnement…)'], ['owner_withdrawal', 'Opname door vennoot'], ['vat_payment', 'Btw-afdracht'], ['existing', 'Staat al in de app → koppelen aan bestaande mutatie']]
+    : [['owner_deposit', 'Storting door vennoot'], ['income', 'Overige opbrengst (rente, cashback)'], ['existing', 'Staat al in de app → koppelen aan bestaande mutatie']];
+  openForm({
+    eyebrow: 'Knab-transactie', title: `${t.amount >= 0 ? '+' : '−'}${euro(amt)} · ${t.counterparty || ''}`, submit: 'Verder',
+    intro: `${fdate(t.date)}${t.description ? ` · ${esc(t.description)}` : ''}<br>Inkopen en verkopen verwerk je via de groene knop of bij <b>Openstaand</b>; staat de inkoop of verkoop nog niet in de app, voeg hem dan eerst toe.`,
+    fields: [
+      { name: 'kind', label: 'Wat is dit?', type: 'select', options: opts, wide: true },
+      { name: 'entry', label: 'Bestaande mutatie', type: 'select', wide: true, show: d => d.kind === 'existing', options: [['', '—'], ...existing.map(e => [e.id, `${fdate(e.date)} · ${e.description} · ${euro(e.amount)}`])] },
+    ],
+    onSubmit: async d => {
+      if (d.kind === 'existing') { if (!d.entry) { toast('Kies een mutatie', 'bad'); return false; } await setTx(id, `bank_entries:${d.entry}`); toast('Gekoppeld'); return; }
+      setTimeout(() => {
+        if (d.kind === 'expense') expenseForm({ description: desc, amount: amt, date: t.date, payment: 'paid', after: e => e?.id && setTx(id, `expenses:${e.id}`) });
+        else bankEntryForm({ type: d.kind, amount: amt, date: t.date, description: desc, after: en => en?.id && setTx(id, `bank_entries:${en.id}`) });
+      }, 60);
+    },
+  });
+}
+
 // ───────────── Bon scannen: AI leest de bon en vult de inkoop in ─────────────
 async function scanReceipt({ file, mailId } = {}) {
   let path = null;
@@ -467,7 +544,7 @@ function expenseForm(preset = {}) {
     intro: preset.capitalized ? 'Deze kosten worden opgeteld bij de kostprijs van het horloge (bijvoorbeeld service, reparatie of een nieuwe band). Ze tellen dan niet als losse bedrijfskosten, maar drukken de winst bij verkoop.' : '',
     fields: [
       { name: 'description', label: 'Omschrijving', required: true, wide: true, value: preset.description || '' },
-      { name: 'date', label: 'Datum', type: 'date', value: today(), required: true },
+      { name: 'date', label: 'Datum', type: 'date', value: preset.date || today(), required: true },
       { name: 'amount', label: 'Bedrag (€)', type: 'money', required: true, value: preset.amount },
       { name: 'category', label: 'Categorie', type: 'select', options: EXPENSE_CATEGORIES, value: preset.category },
       { name: 'watch_id', label: 'Hoort bij horloge (optioneel)', type: 'select', value: preset.watch_id, options: [['', '—'], ...linkable.map(w => [w.id, `${wname(w)} · ${STATUS[w.status]}`])] },
@@ -741,12 +818,12 @@ async function openFile(path) {
 }
 
 // Openstaande post verwerken (bedrag ligt vast, zodat bank en boekhouding altijd gelijk lopen)
-function settleForm(pid) {
+function settleForm(pid, opts = {}) {
   const p = pendingPayments(S()).find(x => x.id === pid); if (!p) return;
   openForm({
     eyebrow: p.direction === 'in' ? 'Ontvangst verwerken' : 'Betaling verwerken', title: p.description, submit: 'Verwerken',
     intro: `Bedrag: <b>${euro(p.amount)}</b> ${p.direction === 'in' ? 'ontvangen op' : 'betaald vanaf'} de zakelijke rekening. Wijkt het echte bedrag af? Pas dan eerst de inkoop, verkoop of uitgave aan.`,
-    fields: [{ name: 'date', label: 'Datum van de betaling', type: 'date', value: today(), required: true }],
+    fields: [{ name: 'date', label: 'Datum van de betaling', type: 'date', value: opts.date || today(), required: true }],
     onSubmit: async d => {
       const amt = round2(p.amount), id = p.watchId || p.batchId || p.expenseId;
       const w = watchById(id);
@@ -757,6 +834,7 @@ function settleForm(pid) {
       if (p.kind === 'batch') { await store.update('purchase_batches', id, { payment_status: 'paid' }); await addBank({ date: d.date, description: p.description, amount: -amt, type: 'purchase', reference_id: `batch:${id}` }); }
       if (p.kind === 'expense') { await store.update('expenses', id, { payment_status: 'paid' }); await addBank({ date: d.date, description: p.description, amount: -amt, type: 'expense', reference_id: `expense:${id}` }); }
       toast('Verwerkt');
+      await opts.after?.();
     },
   });
 }
@@ -769,7 +847,7 @@ function bankEntryForm(preset = {}) {
     fields: [
       { name: 'type', label: 'Soort', type: 'select', value: preset.type, options: [['owner_deposit', 'Storting door vennoot (bv. startkapitaal)'], ['owner_withdrawal', 'Opname door vennoot'], ['income', 'Overige opbrengst (rente, cashback)'], ['vat_payment', 'Btw-afdracht aan Belastingdienst']] },
       { name: 'partner', label: 'Vennoot', type: 'select', options: partners(), value: store.user?.name, show: d => d.type.startsWith('owner') },
-      { name: 'date', label: 'Datum', type: 'date', value: today(), required: true },
+      { name: 'date', label: 'Datum', type: 'date', value: preset.date || today(), required: true },
       { name: 'amount', label: 'Bedrag (€)', type: 'money', required: true, value: preset.amount, hint: owed > 0 ? `Nog af te dragen btw volgens de app: ${euro(owed)}` : '' },
       { name: 'description', label: 'Omschrijving', wide: true, value: preset.description },
     ],
@@ -777,8 +855,9 @@ function bankEntryForm(preset = {}) {
       const amt = round2(d.amount);
       if (amt <= 0) { toast('Vul een bedrag groter dan 0 in', 'bad'); return false; }
       const out = ['owner_withdrawal', 'vat_payment'].includes(d.type);
-      await addBank({ date: d.date, type: d.type, partner: d.type.startsWith('owner') ? d.partner : null, reference_id: d.type === 'vat_payment' && preset.reference_id ? preset.reference_id : null, amount: out ? -amt : amt, description: d.description || (BANK_TYPES[d.type] + (d.type.startsWith('owner') ? ` · ${d.partner}` : '')) });
+      const entry = await addBank({ date: d.date, type: d.type, partner: d.type.startsWith('owner') ? d.partner : null, reference_id: d.type === 'vat_payment' && preset.reference_id ? preset.reference_id : null, amount: out ? -amt : amt, description: d.description || (BANK_TYPES[d.type] + (d.type.startsWith('owner') ? ` · ${d.partner}` : '')) });
       toast('Mutatie opgeslagen');
+      await preset.after?.(entry);
     },
   });
 }
@@ -978,8 +1057,10 @@ const pages = {
     const recv = pend.filter(p => p.direction === 'in').reduce((a, p) => a + p.amount, 0), pay = pend.filter(p => p.direction === 'out').reduce((a, p) => a + p.amount, 0);
     const entries = [...st.bank_entries].sort((a, b) => b.date.localeCompare(a.date) || String(b.created_at).localeCompare(String(a.created_at)));
     const manual = MANUAL_BANK_TYPES, owed = vatOwed(st);
+    setTimeout(maybeAutoBankSync, 0);
     return head('Bank', 'Zakelijke rekening, bijgewerkt door elke betaalde inkoop, verkoop en uitgave.', '<button class="btn" data-action="balance">Saldo corrigeren</button><button class="btn primary" data-action="bank-entry">＋ Mutatie</button>') + `
       <section class="stats">${stat('Saldo', euro(bal))}${stat('Te ontvangen', `<span class="good">${euro(recv)}</span>`)}${stat('Te betalen', `<span class="bad">${euro(pay)}</span>`)}${stat('Verwacht saldo', euro(bal + recv - pay), vatOn(st.settings) ? `daarna nog btw af te dragen: ${euro(owed)}` : '')}</section>
+      ${knabCard()}
       <section class="card"><div class="card-head"><h2>Openstaand</h2></div>
         ${pend.length ? `<ul class="list">${pend.map(p => `<li><div><b>${esc(p.description)}</b><small>${p.direction === 'in' ? 'Te ontvangen' : 'Te betalen'} · ${fdate(p.date)}</small></div><span class="${p.direction === 'in' ? 'good' : 'bad'}">${p.direction === 'in' ? '+' : '−'}${euro(p.amount)}</span><button class="btn small" data-action="settle" data-id="${p.id}">Verwerken</button></li>`).join('')}</ul>` : empty('Niets openstaand.')}
       </section>
@@ -1725,6 +1806,8 @@ function settingsIntegrations() {
         <div class="row-actions">${od?.connected ? '<button class="btn" data-action="onedrive-sync">Nu synchroniseren</button><button class="btn ghost danger-text" data-action="integ-disconnect" data-provider="onedrive">Ontkoppelen</button>' : `<button class="btn primary" data-action="onedrive-connect" ${pending ? 'disabled' : ''}>Koppel OneDrive</button>`}</div></div>
       <div class="integ-row"><div><b>Gmail</b><p class="muted">Mails komen binnen onder Documenten → Mail, waar je ze als bon koppelt.</p><label class="field inline"><span>Welke mails</span><select data-setting="gmail_scope">${options([['all', 'Alles uit de inbox (+ label LUMAR)'], ['nopromo', 'Inbox zonder Reclame en Sociaal'], ['receipts', 'Alleen bonnen, facturen en bestellingen']], S().settings.gmail_scope || 'all')}</select></label>${status(gm?.connected, gm?.connected ? `info.lumarbusiness@gmail.com · laatste contact ${ago(gm.updated_at)}` : '')}${gmailStale() ? GMAIL_STALE_HTML : ''}</div>
         <div class="row-actions">${gm?.connected ? '<button class="btn" data-action="gmail-setup">Nieuwe koppelcode</button><button class="btn ghost danger-text" data-action="integ-disconnect" data-provider="gmail">Ontkoppelen</button>' : `<button class="btn primary" data-action="gmail-setup" ${pending ? 'disabled' : ''}>Koppel Gmail</button>`}</div></div>
+      <div class="integ-row"><div><b>Knab (bank)</b><p class="muted">Alleen meelezen via Enable Banking: de echte bij- en afschrijvingen komen binnen onder Financiën → Bank. Elke ±180 dagen opnieuw goedkeuren bij Knab.</p>${status(integ?.knab?.connected, integ?.knab?.account)}</div>
+        <div class="row-actions">${integ?.knab?.connected ? '<button class="btn" data-go="financien/bank">Bekijken</button><button class="btn ghost danger-text" data-action="integ-disconnect" data-provider="knab">Ontkoppelen</button>' : `<button class="btn primary" data-action="bank-connect" ${pending ? 'disabled' : ''}>Koppel Knab</button>`}</div></div>
       ${['instagram', 'tiktok'].map(pv => { const x = integ?.[pv]; const nm = pv === 'instagram' ? 'Instagram' : 'TikTok';
         const txt = pv === 'instagram' ? 'Plaats posts (foto, carrousel of reel) rechtstreeks vanuit Marketing. Volgers, weergaven en likes komen vanzelf binnen onder Marketing → Statistieken.' : 'Stuur video\'s vanuit Marketing als concept naar TikTok; daar kies je geluid en plaats je hem. Volgers en weergaven komen vanzelf binnen onder Marketing → Statistieken.';
         return `<div class="integ-row"><div><b>${nm}</b><p class="muted">${txt}</p>${status(x?.connected, x?.account)}</div>
@@ -2131,6 +2214,18 @@ document.addEventListener('click', async e => {
     switch (a.dataset.action) {
       case 'apps-sheet': appsSheet(); break;
       case 'scan-receipt': pickReceipt(); break;
+      case 'bank-connect': { const r = await store.invoke('lumar-bank', { action: 'connect' }); location.href = r.url; break; }
+      case 'bank-sync': bankSync(); break;
+      case 'bank-all': ui.bankAll = true; render(); break;
+      case 'tx-ignore': await setTx(id, 'ignored'); toast('Genegeerd'); render(); break;
+      case 'tx-book': txBookForm(id); break;
+      case 'tx-match': {
+        const t = bankTxs().find(x => x.id === id), ref = a.dataset.ref;
+        if (a.dataset.kind === 'entry') { await setTx(id, `bank_entries:${ref}`); toast('Gekoppeld'); render(); break; }
+        const before = new Set(S().bank_entries.map(e => e.id));
+        settleForm(ref, { date: t.date, after: async () => { const e = S().bank_entries.find(x => !before.has(x.id)); if (e) await setTx(id, `bank_entries:${e.id}`); } });
+        break;
+      }
       case 'mail-scan': $('dialog.detail')?.close(); await scanReceipt({ mailId: id }); break;
       case 'cat-add-brand': { const v = $('#catNewBrand').value.trim(); if (!v) break; await addToCatalog(v); toast(`${v} toegevoegd`); render(); break; }
       case 'cat-add-model': { const inp = document.querySelector(`[data-cat-model="${CSS.escape(a.dataset.brand)}"]`); const v = inp?.value.trim(); if (!v) break; await addToCatalog(a.dataset.brand, v); render(); break; }
@@ -2171,7 +2266,7 @@ document.addEventListener('click', async e => {
       case 'social-refresh': await loadSocial(true); break;
       case 'ig-new': postForm(null, { channel: 'Instagram', status: 'prep', date: today() }); break;
       case 'tt-new': postForm(null, { channel: 'TikTok', status: 'prep', date: today(), send_tt: !!integ?.tiktok?.connected }); break;
-      case 'integ-disconnect': if (await confirmDialog('Koppeling verbreken?', 'De app stopt met deze koppeling. Bestaande bestanden blijven staan.', 'Ontkoppelen')) { await store.invoke(['instagram', 'tiktok'].includes(a.dataset.provider) ? 'lumar-social' : 'lumar-integrations', { action: 'disconnect', provider: a.dataset.provider }); social.data = null; await loadIntegrations(); render(); } break;
+      case 'integ-disconnect': if (await confirmDialog('Koppeling verbreken?', 'De app stopt met deze koppeling. Bestaande bestanden blijven staan.', 'Ontkoppelen')) { await store.invoke(['instagram', 'tiktok'].includes(a.dataset.provider) ? 'lumar-social' : a.dataset.provider === 'knab' ? 'lumar-bank' : 'lumar-integrations', { action: 'disconnect', provider: a.dataset.provider }); social.data = null; await loadIntegrations(); render(); } break;
       case 'task': inDetail?.close(); taskForm(null, a.dataset.watch ? { watch_id: a.dataset.watch, area: 'Verkoop' } : {}); break;
       case 'edit-task': inDetail?.close(); taskForm(id); break;
       case 'task-move': await moveTask(id, +a.dataset.dir); break;
@@ -2259,10 +2354,10 @@ function showApp() {
   $('#auth').hidden = true; $('#app').hidden = false;
   store.onUploaded = () => scheduleOneDriveSync();
   const qs = new URLSearchParams(location.search);
-  if (qs.get('connected')) { toast(({ onedrive: 'OneDrive', instagram: 'Instagram', tiktok: 'TikTok' }[qs.get('connected')] || 'Koppeling') + ' is gekoppeld'); history.replaceState(null, '', location.pathname + location.hash); }
+  if (qs.get('connected')) { toast(({ onedrive: 'OneDrive', instagram: 'Instagram', tiktok: 'TikTok', knab: 'Knab' }[qs.get('connected')] || 'Koppeling') + ' is gekoppeld'); if (qs.get('connected') === 'knab') { bankAutoDone = true; setTimeout(() => loadIntegrations().then(() => bankSync(true)), 800); } history.replaceState(null, '', location.pathname + location.hash); }
   if (qs.get('koppelfout')) { toast('Koppelen mislukt: ' + qs.get('koppelfout'), 'bad'); history.replaceState(null, '', location.pathname + location.hash); }
   go(location.hash.slice(1) || 'home');
-  loadIntegrations().then(() => { if (['settings', 'inbox', 'tiktok', 'instagram'].includes(route.page)) render(); });
+  loadIntegrations().then(() => { if (['settings', 'inbox', 'tiktok', 'instagram', 'bank'].includes(route.page)) render(); });
   loadTeam().then(() => { if (route.page === 'settings') render(); });
   loadDevices().then(() => { if (route.page === 'settings') render(); });
   store.onPresence = () => { if (route.page === 'settings' && !$('#modalRoot').children.length && !document.activeElement?.matches('input,select,textarea')) render(); };
