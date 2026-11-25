@@ -889,6 +889,7 @@ async function watchDetail(id) {
   if (w.status === 'sold') acts.push(`<button class="btn" data-action="customer-return" data-id="${id}">Retour van klant</button>`);
   if (['in_stock', 'incoming'].includes(w.status)) acts.push(`<button class="btn" data-action="supplier-return" data-id="${id}">Terug naar verkoper</button>`, `<button class="btn" data-action="write-off" data-id="${id}">Afschrijven</button>`);
   if (w.status !== 'written_off') acts.push(`<button class="btn" data-action="watch-cost" data-id="${id}">＋ Kosten</button>`);
+  if (w.status !== 'written_off' && w.status !== 'returned') acts.push(`<button class="btn" data-action="web-edit" data-id="${id}">${w.web_published ? '● Online' : 'Website'}</button>`);
   acts.push(`<button class="btn" data-action="edit-watch" data-id="${id}">Bewerken</button>`, `<button class="btn ghost danger-text" data-action="delete-watch" data-id="${id}">Verwijderen</button>${w.batch_id ? `<button class="btn ghost danger-text" data-action="delete-batch" data-batch="${w.batch_id}">Hele bestelling verwijderen</button>` : ''}`);
   const dlg = openDialog(`<div class="modal-body wide">
     <header><div><div class="eyebrow">${esc(w.reference || 'Horloge')}</div><h2>${esc(wname(w))}</h2><div>${statusChip(w.status)}</div></div><button class="x" data-close aria-label="Sluiten">×</button></header>
@@ -1213,6 +1214,7 @@ const ICON = {
   branding: '<circle cx="12" cy="12" r="9"/><circle cx="7.8" cy="11" r="1.2"/><circle cx="10.5" cy="7.2" r="1.2"/><circle cx="15.2" cy="8" r="1.2"/><path d="M13 21c-1.7 0-2.3-1.2-2.3-2.2 0-1.3 1-2.1 2.3-2.1h2.2A3.8 3.8 0 0 0 19 13"/>',
   documenten: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5M10 13h6M10 17h6"/>',
   instellingen: '<circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/>',
+  website: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/>',
   more: '<circle cx="5.5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18.5" cy="12" r="1.4"/>',
   apps: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/>',
 };
@@ -1226,6 +1228,7 @@ const MODULES = {
   taken: { name: 'Taken', desc: 'Wie doet wat, en wanneer', color: '#3c5f8a', pages: [['tasks', 'Takenbord'], ['hours', 'Uren']], quick: [['task', '＋ Taak', 'primary'], ['hours-add', '＋ Uren']] },
   branding: { name: 'Branding', desc: "Kleuren, logo's en vaste teksten", color: '#6b4f8a', pages: [['brand', 'Merkkit']], quick: [] },
   documenten: { name: 'Documenten', desc: 'Bonnen, mail, documenten en OneDrive', color: '#46696a', pages: [['receipts', 'Bonnen'], ['inbox', 'Mail'], ['docs', 'Documenten'], ['onedrive', 'OneDrive']], quick: [['doc', '＋ Document', 'primary']] },
+  website: { name: 'Website', desc: 'Webshop, aanbiedingen en zoekopdrachten', color: '#2b2924', pages: [['web-shop', 'Webshop'], ['web-offers', 'Aanbiedingen'], ['web-alerts', 'Zoekopdrachten']], quick: [] },
   instellingen: { name: 'Instellingen', desc: 'Btw, winstverdeling en account', color: '#5f5a50', pages: [['settings', 'Instellingen']], quick: [] },
 };
 // ───────────── Mobiel: bovenbalk met subpagina's, onderbalk met apps ─────────────
@@ -1376,6 +1379,109 @@ function wishForm(id) {
   });
 }
 
+// ───────────── Website: webshop, aanbiedingen (verkoop en inruil) en zoekopdrachten ─────────────
+const WEB_STATUS = [['received', 'Nieuw'], ['reviewing', 'In beoordeling'], ['offer_sent', 'Bod verstuurd'], ['accepted', 'Akkoord'], ['paid', 'Betaald'], ['declined', 'Afgewezen']];
+const webStatus = s => (WEB_STATUS.find(x => x[0] === s) || [s, s])[1];
+const webOpen = () => (S().web_submissions || []).filter(x => ['received', 'reviewing', 'offer_sent', 'accepted'].includes(x.status));
+const webBanner = () => store.webMissing ? '<div class="banner">De websitetabellen ontbreken nog in de database. Vraag Claude om de websitekoppeling opnieuw te installeren.</div>' : '';
+const slugify = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+const SLOT_LABEL = { front: 'Voorkant', back: 'Achterkant', side: 'Zijkant met kroon', left: 'Linkerzijde', dial: 'Wijzerplaat', clasp: 'Armband en sluiting', box: 'Doos en papieren', flaw: 'Krasjes of gebreken', v0: 'Controlefoto 1', v1: 'Controlefoto 2' };
+const SITE_URL = 'https://lumarbusiness.github.io/lumar-website/';
+
+function webForm(id) {
+  const w = watchById(id); if (!w) return;
+  const photos = w.web_photos || [];
+  openForm({
+    eyebrow: 'Website', title: wname(w),
+    intro: `Wat je hier invult komt op de website. Inkoopprijs, verkoper en marge blijven altijd privé.${photos.length ? ` Er staan nu ${photos.length} foto's online.` : ''}`,
+    fields: [
+      { name: 'web_published', label: 'Tonen op de website', type: 'checkbox', value: w.web_published, wide: true },
+      { name: 'web_reserved', label: 'Gereserveerd (staat online, maar niet te koop)', type: 'checkbox', value: w.web_reserved, wide: true },
+      { name: 'web_price', label: 'Prijs op de website (€)', type: 'money', value: w.web_price ?? w.estimated_value, hint: 'Inclusief verzending binnen Nederland.' },
+      { name: 'web_size', label: 'Kastdiameter', value: w.web_size, placeholder: 'Bijv. 40 mm' },
+      { name: 'web_movement', label: 'Uurwerk', value: w.web_movement, placeholder: 'Bijv. Automatisch, Powermatic 80' },
+      { name: 'vinted_url', label: 'Link naar Vinted-advertentie', type: 'url', value: w.vinted_url, placeholder: 'https://www.vinted.nl/items/…' },
+      { name: 'chrono_url', label: 'Link naar Chrono24-advertentie', type: 'url', value: w.chrono_url, placeholder: 'https://www.chrono24.nl/…' },
+      { name: 'web_note', label: 'Staat in onze woorden (NL)', type: 'textarea', wide: true, value: w.web_note },
+      { name: 'web_note_en', label: 'Staat in onze woorden (EN)', type: 'textarea', wide: true, value: w.web_note_en, placeholder: 'Leeg = de Nederlandse tekst wordt getoond' },
+      { name: 'photos', label: photos.length ? `Nieuwe foto's (vervangt de ${photos.length} huidige)` : "Foto's voor de website (max. 8)", type: 'file', accept: 'image/*', multiple: true, wide: true, hint: 'Volgorde: voorkant eerst. Ze worden automatisch verkleind.' },
+    ],
+    onSubmit: async d => {
+      const patch = { web_published: d.web_published, web_reserved: d.web_reserved, web_price: d.web_price === '' ? null : n(d.web_price), web_size: d.web_size, web_movement: d.web_movement, vinted_url: d.vinted_url, chrono_url: d.chrono_url, web_note: d.web_note, web_note_en: d.web_note_en };
+      if (!w.web_slug) patch.web_slug = `${slugify(`${w.brand} ${w.model}`)}-${String(id).slice(0, 6)}`;
+      const files = (d.photos || []).slice(0, 8);
+      if (files.length) {
+        toast(`Foto's uploaden (0/${files.length})…`);
+        const paths = [];
+        for (const [i, f] of files.entries()) { paths.push(await store.uploadTo('web-photos', await compressImage(f, 1800), `w/${id}`)); toast(`Foto's uploaden (${i + 1}/${files.length})…`); }
+        patch.web_photos = paths;
+        if (photos.length) await store.removeFrom?.('web-photos', photos).catch(() => {});
+      }
+      if (d.web_published && !(patch.web_photos || photos).length) toast('Let op: dit horloge heeft nog geen foto\'s op de website', 'bad');
+      await store.update('watches', id, { ...patch, history: hist(w, d.web_published ? (w.web_published ? 'Website bijgewerkt' : 'Online gezet op de website') : (w.web_published ? 'Van de website gehaald' : 'Websitegegevens opgeslagen')) });
+      toast(d.web_published ? 'Staat online' : 'Opgeslagen');
+    },
+  });
+}
+
+async function offerDetail(id) {
+  const o = S().web_submissions.find(x => x.id === id); if (!o) return;
+  const trade = o.tradein_watch_id && watchById(o.tradein_watch_id);
+  const row = (l, v) => v === null || v === undefined || v === '' ? '' : `<div class="kv"><span>${l}</span><b>${v}</b></div>`;
+  const mail = (() => {
+    const en = o.lang === 'en', first = esc(o.name.split(' ')[0]);
+    const subj = en ? `Our offer for your ${o.brand} ${o.model} (${o.ref})` : `Ons bod op je ${o.brand} ${o.model} (${o.ref})`;
+    const amount = o.offer_amount ? euro(o.offer_amount) : '€ …';
+    const body = en ? `Hi ${o.name.split(' ')[0]},\n\nThank you for offering your ${o.brand} ${o.model}. Based on your photos and current market prices, we would like to offer ${amount}.${trade ? `\nThis amount will be deducted from the price of the ${wname(trade)}.` : ''}\n\nThis offer is without obligation and valid for 7 days. You can follow the status with reference ${o.ref} on our website.\n\nKind regards,\n${store.user.name} – LUMAR Watches`
+      : `Hoi ${o.name.split(' ')[0]},\n\nBedankt voor het aanbieden van je ${o.brand} ${o.model}. Op basis van je foto's en de huidige marktprijzen bieden we je ${amount}.${trade ? `\nDit bedrag verrekenen we met de prijs van de ${wname(trade)}.` : ''}\n\nDit bod is vrijblijvend en 7 dagen geldig. Je kunt de status volgen met referentie ${o.ref} op onze website.\n\nGroet,\n${store.user.name} – LUMAR Watches`;
+    return `mailto:${encodeURIComponent(o.email)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`; void first;
+  })();
+  const dlg = openDialog(`<form class="modal-body wide" novalidate>
+    <header><div><div class="eyebrow">${esc(o.ref)} · ${o.kind === 'tradein' ? 'Inruil' : 'Aanbieding'} · ${fdate(String(o.created_at).slice(0, 10))}</div><h2>${esc(o.brand)} ${esc(o.model)}</h2><div><span class="chip ws-${o.status}">${webStatus(o.status)}</span></div></div><button type="button" class="x" data-close aria-label="Sluiten">×</button></header>
+    <div class="web-photos">${(o.photo_paths || []).map(p => { const k = (p.split('/').pop() || '').split('.')[0]; return `<a class="web-ph" data-wphoto="${esc(p)}" target="_blank" rel="noopener"><span>${esc(SLOT_LABEL[k] || k)}</span></a>`; }).join('')}</div>
+    ${o.verify_times ? `<p class="muted">Controleer op de controlefoto's of de wijzers op <b>${esc(o.verify_times)}</b> staan.</p>` : ''}
+    <div class="detail-grid">
+      <div>
+        <h3>Horloge</h3>${row('Referentie', esc(o.reference))}${row('Aankoopjaar', esc(o.year))}${row('Staat', esc(o.condition))}${row('Meegeleverd', esc((o.included || []).join(', ')))}${row('Vraagprijs', o.asking_price ? euro(o.asking_price) : '')}${o.notes ? `<p class="notes">${esc(o.notes)}</p>` : ''}
+        ${trade ? `<h3>Inruil voor</h3>${row('Horloge', `<button type="button" class="link" data-action="watch" data-id="${trade.id}">${esc(wname(trade))}</button>`)}${row('Webprijs', euro(trade.web_price ?? trade.estimated_value))}` : ''}
+      </div>
+      <div>
+        <h3>Verkoper</h3>${row('Naam', esc(o.name))}${row('E-mail', `<a class="link" href="mailto:${esc(o.email)}">${esc(o.email)}</a>`)}${row('Telefoon', esc(o.phone))}${row('Woonplaats', esc(o.city))}${row('Taal', o.lang === 'en' ? 'Engels' : 'Nederlands')}
+        <h3>Ons bod</h3>
+        <div class="grid">
+          ${fieldHtml({ name: 'status', label: 'Status', type: 'select', options: WEB_STATUS, value: o.status })}
+          ${fieldHtml({ name: 'offer_amount', label: 'Bod (€)', type: 'money', value: o.offer_amount })}
+          ${fieldHtml({ name: 'offer_note', label: 'Toelichting voor de verkoper (zichtbaar bij status opvragen)', type: 'textarea', wide: true, value: o.offer_note })}
+        </div>
+      </div>
+    </div>
+    <footer class="actions"><button type="button" class="btn ghost danger-text left" data-wdel>Verwijderen</button><a class="btn" href="${mail}">✉ Bod mailen</a>${['accepted', 'paid'].includes(o.status) ? `<button type="button" class="btn" data-wbuy>Gekocht → inkoop</button>` : ''}<button class="btn primary" type="submit">Opslaan</button></footer>
+  </form>`, 'detail');
+  dlg.querySelectorAll('[data-wphoto]').forEach(async a => { const u = await store.signedFrom('web-uploads', a.dataset.wphoto).catch(() => null); if (u) { a.href = u; a.style.backgroundImage = `url("${u}")`; a.classList.add('has-photo'); } });
+  const form = $('form', dlg);
+  form.addEventListener('submit', async e => {
+    e.preventDefault(); const d = formValues(form);
+    try { await store.update('web_submissions', id, { status: d.status, offer_amount: d.offer_amount === '' ? null : n(d.offer_amount), offer_note: d.offer_note, updated_at: new Date().toISOString() }); toast('Aanbieding bijgewerkt'); dlg.close(); render(); } catch (err) { toast(err.message, 'bad'); }
+  });
+  $('[data-wdel]', dlg).addEventListener('click', async () => {
+    if (!await confirmDialog('Aanbieding verwijderen?', 'De gegevens en foto\'s van deze verkoper worden verwijderd. Dit kan niet ongedaan worden gemaakt.')) return;
+    await store.removeFrom?.('web-uploads', o.photo_paths || []).catch(() => {});
+    await store.remove('web_submissions', id); toast('Verwijderd'); dlg.close(); render();
+  });
+  $('[data-wbuy]', dlg)?.addEventListener('click', () => { dlg.close(); purchaseForm({ prefill: { brand: o.brand, model: o.model, reference: o.reference, purchase_price: o.offer_amount, seller: o.name, purchase_platform: 'Website' }, after: () => store.update('web_submissions', id, { status: 'paid', updated_at: new Date().toISOString() }) }); });
+}
+
+const alertMatches = a => S().watches.filter(w => ['in_stock', 'incoming'].includes(w.status) && String(w.brand).toLowerCase() === String(a.brand).toLowerCase()
+  && (!a.model || `${w.model} ${w.reference || ''}`.toLowerCase().includes(String(a.model).toLowerCase().split(' ')[0]))
+  && (!a.max_price || n(w.web_price ?? w.estimated_value) <= n(a.max_price) * 1.1));
+function alertMail(a, w) {
+  const en = a.lang === 'en', link = w?.web_slug ? `${SITE_URL}#horloge-${w.web_slug}` : SITE_URL;
+  const subj = en ? `Found: ${w ? wname(w) : a.brand}` : `Gevonden: ${w ? wname(w) : a.brand}`;
+  const body = en ? `Hi,\n\nYou asked us to look out for a ${a.brand} ${a.model || ''}. We just got ${w ? `a ${wname(w)}` : 'one in'}:\n${link}\n\nKind regards,\nLUMAR Watches\n\n(Reply "stop" to stop receiving these alerts.)`
+    : `Hoi,\n\nJe vroeg ons uit te kijken naar een ${a.brand} ${a.model || ''}. We hebben er net ${w ? `een ${wname(w)}` : 'een'} binnen:\n${link}\n\nGroet,\nLUMAR Watches\n\n(Antwoord "stop" als je geen meldingen meer wilt.)`;
+  return `mailto:${encodeURIComponent(a.email)}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
+}
+
 // Marketing
 const POST_STATUS = [['idea', 'Idee'], ['prep', 'In voorbereiding'], ['planned', 'Ingepland'], ['posted', 'Gepost']];
 const CHANNELS = ['Instagram', 'TikTok', 'Facebook', 'Vinted', 'Marktplaats', 'Chrono24', 'Website', 'Overig'];
@@ -1483,10 +1589,11 @@ function launcher() {
     taken: `${open.length} open · ${mine.length} voor jou`,
     branding: (c => `${brand.filter(b => b.kind === 'color').length} kleuren · ${c} ${c === 1 ? 'bestand' : 'bestanden'}`)(brand.filter(b => b.kind === 'asset').length),
     documenten: `${items('doc').length} ${items('doc').length === 1 ? 'document' : 'documenten'} · ${missingReceipts(st).length} ${missingReceipts(st).length === 1 ? 'bon ontbreekt' : 'bonnen ontbreken'}`,
+    website: `${S().watches.filter(w => w.web_published && w.status !== 'sold').length} online · ${webOpen().length} ${webOpen().length === 1 ? 'aanbieding' : 'aanbiedingen'} open`,
     instellingen: `Ingelogd als ${me}`,
   };
   const rc = reconcile(st);
-  const badge = { financien: rc.ok ? pendingPayments(st).length : '!', taken: late, documenten: missingReceipts(st).length };
+  const badge = { financien: rc.ok ? pendingPayments(st).length : '!', taken: late, documenten: missingReceipts(st).length, website: (st.web_submissions || []).filter(x => x.status === 'received').length };
   const h = new Date().getHours(), greet = h < 6 ? 'Goedenacht' : h < 12 ? 'Goedemorgen' : h < 18 ? 'Goedemiddag' : 'Goedenavond';
   return `<div class="launch">
     <div class="launch-hello"><h1>${greet}, ${esc(me)}</h1><p class="muted">${longDate()}</p></div>
@@ -1532,6 +1639,46 @@ Object.assign(pages, {
         <div class="task-top"><span class="chip">${esc(i.category)}</span><span class="chip is-${i.status}">${(IDEA_STATUS.find(x => x[0] === i.status) || [])[1] || ''}</span></div>
         <h3>${esc(i.title)}</h3>${i.description ? `<p>${esc(i.description)}</p>` : ''}
         <div class="task-foot">${avatar(i.created_by_name)}<small>${esc(i.created_by_name || '')} · ${fdate(String(i.created_at).slice(0, 10))}</small><span class="move"><button class="btn small" data-action="idea-task" data-id="${i.id}">→ Taak</button></span></div></article>`).join('')}</div>` : empty('Nog geen ideeën hier.', '<button class="btn primary" data-action="idea">＋ Eerste idee</button>')}`;
+  },
+
+  'web-shop'() {
+    const st = S(), f = ui.webFilter || 'active';
+    const list = st.watches.filter(w => f === 'online' ? w.web_published : f === 'sold' ? w.status === 'sold' : ['in_stock', 'incoming', 'customer_returning'].includes(w.status)).sort((a, b) => (b.web_published ? 1 : 0) - (a.web_published ? 1 : 0) || String(b.created_at).localeCompare(String(a.created_at)));
+    const cnt = k => st.watches.filter(w => k === 'online' ? w.web_published : k === 'sold' ? w.status === 'sold' : ['in_stock', 'incoming', 'customer_returning'].includes(w.status)).length;
+    return head('Webshop', 'Kies welke horloges op de website staan, met prijs, foto\'s en links naar Vinted en Chrono24.', `<a class="btn" href="${SITE_URL}" target="_blank" rel="noopener">Website openen ↗</a>`) + webBanner() + `
+      <div class="toolbar">${tabsHtml('webFilter', [['active', 'Voorraad', cnt('active')], ['online', 'Online', cnt('online')], ['sold', 'Verkocht', cnt('sold')]])}</div>
+      ${list.length ? `<div class="card flush"><table class="table"><thead><tr><th>Horloge</th><th>Status</th><th class="r">Webprijs</th><th class="r">Foto's</th><th>Links</th><th>Website</th></tr></thead><tbody>
+        ${list.map(w => `<tr data-action="web-edit" data-id="${w.id}"><td><b>${esc(wname(w))}</b>${w.reference ? `<small class="muted"> · ${esc(w.reference)}</small>` : ''}</td><td>${statusChip(w.status)}${w.web_reserved ? ' <span class="chip">Gereserveerd</span>' : ''}</td>
+          <td class="r">${w.web_price != null ? euro(w.web_price) : w.estimated_value ? `<span class="muted">${euro(w.estimated_value)}</span>` : '—'}</td><td class="r">${(w.web_photos || []).length || '<span class="muted">0</span>'}</td>
+          <td>${w.vinted_url ? '<span class="chip">Vinted</span>' : ''}${w.chrono_url ? ' <span class="chip">Chrono24</span>' : ''}</td>
+          <td><button class="btn small ${w.web_published ? 'primary' : ''}" data-action="web-toggle" data-id="${w.id}">${w.web_published ? '● Online' : 'Offline'}</button></td></tr>`).join('')}
+      </tbody></table></div>` : empty('Hier staan nog geen horloges.')}`;
+  },
+
+  'web-offers'() {
+    const all = S().web_submissions || [], f = ui.offerFilter || 'open';
+    const groups = { open: ['received', 'reviewing', 'offer_sent', 'accepted'], done: ['paid'], declined: ['declined'] };
+    const list = all.filter(o => f === 'all' || groups[f].includes(o.status)).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    return head('Aanbiedingen', 'Horloges die mensen via de website aanbieden of willen inruilen. Open er een om de foto\'s te bekijken en een bod te doen.') + webBanner() + `
+      <div class="toolbar">${tabsHtml('offerFilter', [['open', 'Open', all.filter(o => groups.open.includes(o.status)).length], ['done', 'Gekocht', all.filter(o => o.status === 'paid').length], ['declined', 'Afgewezen'], ['all', 'Alles', all.length]])}</div>
+      ${list.length ? `<div class="card flush"><table class="table"><thead><tr><th>Horloge</th><th>Van</th><th>Soort</th><th class="r">Vraagprijs</th><th class="r">Ons bod</th><th>Status</th><th>Datum</th></tr></thead><tbody>
+        ${list.map(o => `<tr data-action="web-offer" data-id="${o.id}"><td><b>${esc(o.brand)} ${esc(o.model)}</b><br><small class="muted">${esc(o.ref)} · ${(o.photo_paths || []).length} foto's</small></td><td>${esc(o.name)}<br><small class="muted">${esc(o.email)}</small></td>
+          <td>${o.kind === 'tradein' ? `<span class="chip">Inruil</span><br><small class="muted">${esc(wname(watchById(o.tradein_watch_id)))}</small>` : 'Verkoop'}</td><td class="r">${o.asking_price ? euro(o.asking_price) : '—'}</td><td class="r">${o.offer_amount ? euro(o.offer_amount) : '—'}</td>
+          <td><span class="chip ws-${o.status}">${webStatus(o.status)}</span></td><td>${fdate(String(o.created_at).slice(0, 10))}</td></tr>`).join('')}
+      </tbody></table></div>` : empty(f === 'open' ? 'Geen open aanbiedingen. Nieuwe aanbiedingen van de website verschijnen hier vanzelf.' : 'Niets in deze lijst.')}`;
+  },
+
+  'web-alerts'() {
+    const all = (S().web_alerts || []).filter(a => ui.alertAll || a.active).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    const withMatch = all.filter(a => a.active && alertMatches(a).length).length;
+    return head('Zoekopdrachten', 'Bezoekers die een seintje willen als jullie een bepaald horloge binnen hebben. Een groene regel betekent: er ligt een passend horloge op voorraad.', `<button class="btn" data-action="set-ui" data-key="alertAll" data-value="${ui.alertAll ? '' : '1'}">${ui.alertAll ? 'Alleen actieve' : 'Ook afgemelde tonen'}</button>`) + webBanner() + `
+      ${withMatch ? `<div class="banner good">${withMatch} ${withMatch === 1 ? 'zoekopdracht heeft' : 'zoekopdrachten hebben'} een passend horloge op voorraad. Mail ze met één klik.</div>` : ''}
+      ${all.length ? `<div class="card flush"><table class="table"><thead><tr><th>Zoekt</th><th>E-mail</th><th class="r">Max. prijs</th><th>Passend op voorraad</th><th>Gemeld</th><th></th></tr></thead><tbody>
+        ${all.map(a => { const m = alertMatches(a); return `<tr class="${a.active && m.length ? 'match' : ''}"><td><b>${esc(a.brand)} ${esc(a.model || '')}</b>${a.note ? `<br><small class="muted">${esc(a.note)}</small>` : ''}<br><small class="muted">${fdate(String(a.created_at).slice(0, 10))} · ${a.lang === 'en' ? 'EN' : 'NL'}</small></td><td>${esc(a.email)}</td><td class="r">${a.max_price ? euro(a.max_price) : '—'}</td>
+          <td>${m.length ? m.map(w => `<a class="chip" href="${alertMail(a, w)}" data-action="web-alert-mailed" data-id="${a.id}">✉ ${esc(wname(w))}</a>`).join(' ') : '<span class="muted">Nog niets</span>'}</td>
+          <td>${a.notified_at ? fdate(String(a.notified_at).slice(0, 10)) : '—'}</td>
+          <td class="r">${a.active ? `<button class="btn small" data-action="web-alert-off" data-id="${a.id}">Afmelden</button>` : '<span class="chip">Afgemeld</span>'}</td></tr>`; }).join('')}
+      </tbody></table></div>` : empty('Nog geen zoekopdrachten. Bezoekers kunnen er een instellen op de collectiepagina van de website.')}`;
   },
 
   wishlist() {
@@ -2273,6 +2420,11 @@ document.addEventListener('click', async e => {
       case 'idea': ideaForm(); break;
       case 'edit-idea': ideaForm(id); break;
       case 'idea-task': { const i = itemById(id); taskForm(null, { title: i.title, notes: i.description, area: AREAS.includes(i.category) ? i.category : 'Algemeen' }); break; }
+      case 'web-edit': inDetail?.close(); webForm(id); break;
+      case 'web-toggle': { e.stopPropagation(); const w = watchById(id); if (!w.web_published && !w.web_slug) { webForm(id); break; } await store.update('watches', id, { web_published: !w.web_published, history: hist(w, w.web_published ? 'Van de website gehaald' : 'Online gezet op de website') }); toast(w.web_published ? 'Offline gehaald' : 'Staat online'); render(); break; }
+      case 'web-offer': offerDetail(id); break;
+      case 'web-alert-mailed': { const a2 = S().web_alerts.find(x => x.id === id); setTimeout(async () => { await store.update('web_alerts', id, { notified_at: new Date().toISOString() }); render(); }, 300); void a2; break; }
+      case 'web-alert-off': await store.update('web_alerts', id, { active: false }); toast('Afgemeld'); render(); break;
       case 'wish': wishForm(); break;
       case 'edit-wish': wishForm(id); break;
       case 'wish-bought': { const w = itemById(id); purchaseForm({ prefill: { brand: w.brand, model: w.model, reference: w.reference, purchase_price: w.max_price, estimated_value: w.expected_sale }, after: () => saveItem('wish', id, { status: 'bought' }) }); break; }
