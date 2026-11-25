@@ -10,7 +10,7 @@ export const DEFAULT_SETTINGS = {
   company_name: 'LUMAR Watches',
 };
 
-const emptyState = () => ({ watches: [], expenses: [], bank_entries: [], purchase_batches: [], items: [], settings: { ...DEFAULT_SETTINGS } });
+const emptyState = () => ({ watches: [], expenses: [], bank_entries: [], purchase_batches: [], items: [], web_submissions: [], web_alerts: [], settings: { ...DEFAULT_SETTINGS } });
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now().toString(36) + Math.random().toString(36).slice(2));
 
 export async function createStore(config, onRemoteChange = () => {}) {
@@ -25,6 +25,7 @@ function demoStore() {
   let state = read() || emptyState();
   state.settings = { ...DEFAULT_SETTINGS, ...(state.settings || {}) };
   state.items = state.items || [];
+  state.web_submissions = state.web_submissions || []; state.web_alerts = state.web_alerts || [];
   const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { console.warn(e); } };
   const files = () => { try { return JSON.parse(localStorage.getItem(FILES)) || {}; } catch { return {}; } };
   let signedIn = sessionStorage.getItem('lumar-demo-user');
@@ -58,6 +59,9 @@ function demoStore() {
       return path;
     },
     async fileUrl(path) { return files()[path] || null; },
+    async uploadTo(bucket, blob, folder) { return this.upload(blob, folder); },
+    publicUrl(bucket, path) { return files()[path] || ''; },
+    async signedFrom(bucket, path) { return files()[path] || null; },
     async invoke() { throw new Error('Koppelingen werken alleen met de gedeelde database (niet in demomodus).'); },
     async rpc() { return []; },
     async resetDemo() { state = emptyState(); this.state = state; persist(); localStorage.removeItem(FILES); },
@@ -77,7 +81,7 @@ async function cloudStore(config, onRemoteChange) {
   const memberName = id => members.find(m => m.user_id === id)?.display_name || '';
   const decorate = r => ({ ...r, created_by_name: memberName(r.created_by) });
   // numeric komt als string terug uit Postgres → naar getallen
-  const NUM = ['purchase_price', 'extra_costs', 'total_cost', 'estimated_value', 'sale_price', 'sale_costs', 'amount', 'shipping_costs', 'buyer_protection', 'other_costs'];
+  const NUM = ['purchase_price', 'extra_costs', 'total_cost', 'estimated_value', 'sale_price', 'sale_costs', 'amount', 'shipping_costs', 'buyer_protection', 'other_costs', 'web_price', 'asking_price', 'offer_amount', 'max_price'];
   const normalize = r => { const o = decorate(r); for (const k of NUM) if (o[k] !== null && o[k] !== undefined) o[k] = +o[k]; return o; };
   const clean = row => { const o = { ...row }; delete o.created_by_name; delete o.id; delete o.created_at; delete o.created_by; for (const k in o) if (o[k] === '' || o[k] === undefined) o[k] = null; return o; };
 
@@ -115,7 +119,7 @@ async function cloudStore(config, onRemoteChange) {
   function subscribe() {
     if (channel) return;
     channel = sb.channel('lumar-sync');
-    for (const t of [...TABLES, 'items', 'settings'])
+    for (const t of [...TABLES, 'items', 'settings', 'web_submissions', 'web_alerts'])
       channel.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => {
         clearTimeout(timer); timer = setTimeout(async () => { await store.reload(); onRemoteChange(); }, 400);
       });
@@ -150,6 +154,11 @@ async function cloudStore(config, onRemoteChange) {
       const it = await sb.from('items').select('*').order('created_at');
       store.itemsMissing = !!it.error;
       st.items = it.error ? [] : it.data.map(normalize);
+      // Website: aanbiedingen en zoekopdrachten (werkt ook als die tabellen nog niet bestaan)
+      const [ws, wa] = await Promise.all([sb.from('web_submissions').select('*').order('created_at'), sb.from('web_alerts').select('*').order('created_at')]);
+      store.webMissing = !!(ws.error || wa.error);
+      st.web_submissions = ws.error ? [] : ws.data.map(normalize);
+      st.web_alerts = wa.error ? [] : wa.data.map(normalize);
       const settings = check(await sb.from('settings').select('*'));
       for (const s of settings) st.settings[s.key] = s.value;
       store.state = st;
@@ -190,6 +199,22 @@ async function cloudStore(config, onRemoteChange) {
       return data;
     },
     async rpc(name, args) { return check(await sb.rpc(name, args)); },
+    // Website: foto's in een eigen bucket (web-photos is openbaar, web-uploads alleen voor leden)
+    async uploadTo(bucket, blob, folder) {
+      const ext = (blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+      const path = `${folder}/${uuid()}.${ext}`;
+      check(await sb.storage.from(bucket).upload(path, blob, { contentType: blob.type, upsert: false }));
+      return path;
+    },
+    publicUrl(bucket, path) { return path ? sb.storage.from(bucket).getPublicUrl(path).data.publicUrl : ''; },
+    async signedFrom(bucket, path) {
+      if (!path) return null;
+      const key = bucket + ':' + path, c = urlCache.get(key); if (c && c.until > Date.now()) return c.url;
+      const data = check(await sb.storage.from(bucket).createSignedUrl(path, 3600));
+      urlCache.set(key, { url: data.signedUrl, until: Date.now() + 3300e3 });
+      return data.signedUrl;
+    },
+    async removeFrom(bucket, paths) { if (paths.length) check(await sb.storage.from(bucket).remove(paths)); },
     async fileUrl(path) {
       if (!path) return null;
       const c = urlCache.get(path); if (c && c.until > Date.now()) return c.url;

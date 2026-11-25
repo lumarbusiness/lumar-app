@@ -579,3 +579,19 @@ td.clip { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-spa
 .banktx li > div { flex: 1; min-width: 0; }
 .tx-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .tx-acts .btn { white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+
+/* Website: aanbiedingen en zoekopdrachten */
+.web-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin: 4px 0 12px; }
+.web-ph { position: relative; aspect-ratio: 1; border-radius: 10px; background: var(--line) center/cover no-repeat; display: flex; align-items: flex-end; text-decoration: none; overflow: hidden; }
+.web-ph span { width: 100%; font-size: 11px; font-weight: 600; padding: 4px 7px; background: rgba(20,19,15,.62); color: #fff; }
+.web-ph:not(.has-photo)::before { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,.5), transparent); animation: webph 1.2s infinite; }
+@keyframes webph { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+.chip.ws-received { background: var(--gold-soft); color: #7a5a22; }
+.chip.ws-offer_sent, .chip.ws-reviewing { background: #e1e8f2; color: var(--blue); }
+.chip.ws-accepted, .chip.ws-paid { background: #dcefe3; color: var(--good); }
+.chip.ws-declined { background: #f5e0db; color: var(--bad); }
+.banner.good { background: #e3f1e8; color: #1f5a37; border-color: #bfdcc9; }
+tr.match td { background: #f1f8f3; }
+a.chip { text-decoration: none; }
+.field.check { display: flex; flex-direction: row; align-items: center; gap: 10px; font-size: 14px; }
+.field.check input { width: 18px; height: 18px; margin: 0; flex: none; accent-color: var(--ink); }
