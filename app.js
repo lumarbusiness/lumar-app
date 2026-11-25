@@ -56,6 +56,17 @@ async function compressImage(file, max = 1600) {
   return await new Promise(r => c.toBlob(b => r(b || file), 'image/jpeg', 0.82));
 }
 const uploadPhoto = async f => f ? store.upload(await compressImage(f), 'photos') : null;
+// Website-foto's moeten JPG/PNG/WebP zijn (HEIC van een iPhone kan een browser op Windows niet lezen)
+async function webPhoto(file) {
+  const img = await createImageBitmap(file).catch(() => null);
+  if (!img) throw new Error(`"${file.name}" kan niet worden gelezen (waarschijnlijk een HEIC-foto van een iPhone). Zet op de iPhone Instellingen → Camera → Formaten op "Meest compatibel", of stuur de foto eerst door als JPG.`);
+  const scale = Math.min(1, 1800 / Math.max(img.width, img.height));
+  const c = document.createElement('canvas'); c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
+  if (!blob) throw new Error(`"${file.name}" kon niet worden omgezet naar JPG.`);
+  return blob;
+}
 const uploadReceipt = async f => f ? store.upload(f.type.startsWith('image/') ? await compressImage(f, 2200) : f, 'receipts') : null;
 
 // ───────────── Formulieren en panelen ─────────────
@@ -1411,9 +1422,11 @@ function webForm(id) {
       if (!w.web_slug) patch.web_slug = `${slugify(`${w.brand} ${w.model}`)}-${String(id).slice(0, 6)}`;
       const files = (d.photos || []).slice(0, 8);
       if (files.length) {
-        toast(`Foto's uploaden (0/${files.length})…`);
+        toast(`Foto's voorbereiden…`);
+        const blobs = [];
+        for (const f of files) blobs.push(await webPhoto(f));
         const paths = [];
-        for (const [i, f] of files.entries()) { paths.push(await store.uploadTo('web-photos', await compressImage(f, 1800), `w/${id}`)); toast(`Foto's uploaden (${i + 1}/${files.length})…`); }
+        for (const [i, b] of blobs.entries()) { toast(`Foto's uploaden (${i + 1}/${blobs.length})…`); paths.push(await store.uploadTo('web-photos', b, `w/${id}`)); }
         patch.web_photos = paths;
         if (photos.length) await store.removeFrom?.('web-photos', photos).catch(() => {});
       }

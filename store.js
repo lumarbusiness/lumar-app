@@ -201,9 +201,10 @@ async function cloudStore(config, onRemoteChange) {
     async rpc(name, args) { return check(await sb.rpc(name, args)); },
     // Website: foto's in een eigen bucket (web-photos is openbaar, web-uploads alleen voor leden)
     async uploadTo(bucket, blob, folder) {
-      const ext = (blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+      const type = blob.type || 'image/jpeg';
+      const ext = (type.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
       const path = `${folder}/${uuid()}.${ext}`;
-      check(await sb.storage.from(bucket).upload(path, blob, { contentType: blob.type, upsert: false }));
+      check(await sb.storage.from(bucket).upload(path, blob, { contentType: type, upsert: false }));
       return path;
     },
     publicUrl(bucket, path) { return path ? sb.storage.from(bucket).getPublicUrl(path).data.publicUrl : ''; },
