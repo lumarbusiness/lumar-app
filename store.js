@@ -10,7 +10,7 @@ export const DEFAULT_SETTINGS = {
   company_name: 'LUMAR Watches',
 };
 
-const emptyState = () => ({ watches: [], expenses: [], bank_entries: [], purchase_batches: [], items: [], web_submissions: [], web_alerts: [], settings: { ...DEFAULT_SETTINGS } });
+const emptyState = () => ({ watches: [], expenses: [], bank_entries: [], purchase_batches: [], items: [], web_submissions: [], web_alerts: [], web_bids: [], settings: { ...DEFAULT_SETTINGS } });
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now().toString(36) + Math.random().toString(36).slice(2));
 
 export async function createStore(config, onRemoteChange = () => {}) {
@@ -25,7 +25,7 @@ function demoStore() {
   let state = read() || emptyState();
   state.settings = { ...DEFAULT_SETTINGS, ...(state.settings || {}) };
   state.items = state.items || [];
-  state.web_submissions = state.web_submissions || []; state.web_alerts = state.web_alerts || [];
+  state.web_submissions = state.web_submissions || []; state.web_alerts = state.web_alerts || []; state.web_bids = state.web_bids || [];
   const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { console.warn(e); } };
   const files = () => { try { return JSON.parse(localStorage.getItem(FILES)) || {}; } catch { return {}; } };
   let signedIn = sessionStorage.getItem('lumar-demo-user');
@@ -81,7 +81,7 @@ async function cloudStore(config, onRemoteChange) {
   const memberName = id => members.find(m => m.user_id === id)?.display_name || '';
   const decorate = r => ({ ...r, created_by_name: memberName(r.created_by) });
   // numeric komt als string terug uit Postgres → naar getallen
-  const NUM = ['purchase_price', 'extra_costs', 'total_cost', 'estimated_value', 'sale_price', 'sale_costs', 'amount', 'shipping_costs', 'buyer_protection', 'other_costs', 'web_price', 'asking_price', 'offer_amount', 'max_price'];
+  const NUM = ['purchase_price', 'extra_costs', 'total_cost', 'estimated_value', 'sale_price', 'sale_costs', 'amount', 'shipping_costs', 'buyer_protection', 'other_costs', 'web_price', 'asking_price', 'offer_amount', 'max_price', 'counter_amount'];
   const normalize = r => { const o = decorate(r); for (const k of NUM) if (o[k] !== null && o[k] !== undefined) o[k] = +o[k]; return o; };
   const clean = row => { const o = { ...row }; delete o.created_by_name; delete o.id; delete o.created_at; delete o.created_by; for (const k in o) if (o[k] === '' || o[k] === undefined) o[k] = null; return o; };
 
@@ -119,7 +119,7 @@ async function cloudStore(config, onRemoteChange) {
   function subscribe() {
     if (channel) return;
     channel = sb.channel('lumar-sync');
-    for (const t of [...TABLES, 'items', 'settings', 'web_submissions', 'web_alerts'])
+    for (const t of [...TABLES, 'items', 'settings', 'web_submissions', 'web_alerts', 'web_bids'])
       channel.on('postgres_changes', { event: '*', schema: 'public', table: t }, () => {
         clearTimeout(timer); timer = setTimeout(async () => { await store.reload(); onRemoteChange(); }, 400);
       });
@@ -155,10 +155,11 @@ async function cloudStore(config, onRemoteChange) {
       store.itemsMissing = !!it.error;
       st.items = it.error ? [] : it.data.map(normalize);
       // Website: aanbiedingen en zoekopdrachten (werkt ook als die tabellen nog niet bestaan)
-      const [ws, wa] = await Promise.all([sb.from('web_submissions').select('*').order('created_at'), sb.from('web_alerts').select('*').order('created_at')]);
+      const [ws, wa, wb] = await Promise.all([sb.from('web_submissions').select('*').order('created_at'), sb.from('web_alerts').select('*').order('created_at'), sb.from('web_bids').select('*').order('created_at')]);
       store.webMissing = !!(ws.error || wa.error);
       st.web_submissions = ws.error ? [] : ws.data.map(normalize);
       st.web_alerts = wa.error ? [] : wa.data.map(normalize);
+      st.web_bids = wb.error ? [] : wb.data.map(normalize);
       const settings = check(await sb.from('settings').select('*'));
       for (const s of settings) st.settings[s.key] = s.value;
       store.state = st;

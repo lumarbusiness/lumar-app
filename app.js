@@ -1239,7 +1239,7 @@ const MODULES = {
   taken: { name: 'Taken', desc: 'Wie doet wat, en wanneer', color: '#3c5f8a', pages: [['tasks', 'Takenbord'], ['hours', 'Uren']], quick: [['task', '＋ Taak', 'primary'], ['hours-add', '＋ Uren']] },
   branding: { name: 'Branding', desc: "Kleuren, logo's en vaste teksten", color: '#6b4f8a', pages: [['brand', 'Merkkit']], quick: [] },
   documenten: { name: 'Documenten', desc: 'Bonnen, mail, documenten en OneDrive', color: '#46696a', pages: [['receipts', 'Bonnen'], ['inbox', 'Mail'], ['docs', 'Documenten'], ['onedrive', 'OneDrive']], quick: [['doc', '＋ Document', 'primary']] },
-  website: { name: 'Website', desc: 'Webshop, aanbiedingen en zoekopdrachten', color: '#2b2924', pages: [['web-shop', 'Webshop'], ['web-offers', 'Aanbiedingen'], ['web-alerts', 'Zoekopdrachten']], quick: [] },
+  website: { name: 'Website', desc: 'Webshop, biedingen, aanbiedingen en zoekopdrachten', color: '#2b2924', pages: [['web-shop', 'Webshop'], ['web-bids', 'Biedingen'], ['web-offers', 'Aanbiedingen'], ['web-alerts', 'Zoekopdrachten']], quick: [] },
   instellingen: { name: 'Instellingen', desc: 'Btw, winstverdeling en account', color: '#5f5a50', pages: [['settings', 'Instellingen']], quick: [] },
 };
 // ───────────── Mobiel: bovenbalk met subpagina's, onderbalk met apps ─────────────
@@ -1484,6 +1484,69 @@ async function offerDetail(id) {
   $('[data-wbuy]', dlg)?.addEventListener('click', () => { dlg.close(); purchaseForm({ prefill: { brand: o.brand, model: o.model, reference: o.reference, purchase_price: o.offer_amount, seller: o.name, purchase_platform: 'Website' }, after: () => store.update('web_submissions', id, { status: 'paid', updated_at: new Date().toISOString() }) }); });
 }
 
+const BID_STATUS = [['received', 'Nieuw'], ['accepted', 'Geaccepteerd'], ['countered', 'Tegenbod'], ['declined', 'Afgewezen'], ['sold', 'Verkocht'], ['expired', 'Verlopen']];
+const bidStatus = s => (BID_STATUS.find(x => x[0] === s) || [s, s])[1];
+function bidMail(b, kind) {
+  const en = b.lang === 'en', first = b.name.split(' ')[0], w = b.watch_id && watchById(b.watch_id);
+  const link = w?.web_slug ? `${SITE_URL}#horloge-${w.web_slug}` : SITE_URL;
+  const T = {
+    accepted: en ? [`Your offer on the ${b.watch_label} is accepted`, `Hi ${first},\n\nGood news: we accept your offer of ${euro(b.amount)} for the ${b.watch_label}.\n\nWe will reserve the watch for you until ${'[date]'}. Reply to this email and we'll send you the payment details.\n\n${link}\n\nKind regards,\n${store.user.name} – LUMAR Watches`]
+      : [`Je bod op de ${b.watch_label} is geaccepteerd`, `Hoi ${first},\n\nGoed nieuws: we gaan akkoord met je bod van ${euro(b.amount)} op de ${b.watch_label}.\n\nWe reserveren het horloge voor je tot ${'[datum]'}. Reageer op deze mail, dan sturen we je de betaalgegevens.\n\n${link}\n\nGroet,\n${store.user.name} – LUMAR Watches`],
+    countered: en ? [`Counter offer for the ${b.watch_label}`, `Hi ${first},\n\nThank you for your offer of ${euro(b.amount)} for the ${b.watch_label}. We can't go that low, but we can offer it to you for ${euro(b.counter_amount || 0)}.\n\nLet us know if that works for you. You can also follow your offer with reference ${b.ref} on our website.\n\nKind regards,\n${store.user.name} – LUMAR Watches`]
+      : [`Tegenbod voor de ${b.watch_label}`, `Hoi ${first},\n\nBedankt voor je bod van ${euro(b.amount)} op de ${b.watch_label}. Zo laag kunnen we helaas niet, maar we kunnen hem je aanbieden voor ${euro(b.counter_amount || 0)}.\n\nLaat je weten of dat iets voor je is? Je kunt je bod ook volgen met referentie ${b.ref} op onze website.\n\nGroet,\n${store.user.name} – LUMAR Watches`],
+    declined: en ? [`Your offer on the ${b.watch_label}`, `Hi ${first},\n\nThank you for your offer of ${euro(b.amount)} for the ${b.watch_label}. Unfortunately we can't accept it this time.\n\nKind regards,\n${store.user.name} – LUMAR Watches`]
+      : [`Je bod op de ${b.watch_label}`, `Hoi ${first},\n\nBedankt voor je bod van ${euro(b.amount)} op de ${b.watch_label}. Helaas kunnen we het deze keer niet accepteren.\n\nGroet,\n${store.user.name} – LUMAR Watches`],
+  }[kind] || ['', ''];
+  return `mailto:${encodeURIComponent(b.email)}?subject=${encodeURIComponent(T[0])}&body=${encodeURIComponent(T[1])}`;
+}
+function bidDetail(id) {
+  const b = S().web_bids.find(x => x.id === id); if (!b) return;
+  const w = b.watch_id && watchById(b.watch_id);
+  const pct = b.asking_price ? Math.round(b.amount / b.asking_price * 100) : null;
+  const margin = w ? n(b.amount) - n(w.total_cost || w.purchase_price) : null;
+  const others = S().web_bids.filter(x => x.watch_id && x.watch_id === b.watch_id && x.id !== b.id && x.status === 'received');
+  const dlg = openDialog(`<form class="modal-body wide" novalidate>
+    <header><div><div class="eyebrow">${esc(b.ref)} · Bod · ${fdate(String(b.created_at).slice(0, 10))}</div><h2>${esc(b.watch_label)}</h2><div><span class="chip ws-${b.status === 'received' ? 'received' : b.status === 'accepted' ? 'accepted' : b.status === 'countered' ? 'offer_sent' : 'declined'}">${bidStatus(b.status)}</span></div></div><button type="button" class="x" data-close aria-label="Sluiten">×</button></header>
+    <div class="bid-sum">
+      <div><span>Bod</span><b>${euro(b.amount)}</b>${pct ? `<small>${pct}% van de vraagprijs</small>` : ''}</div>
+      <div><span>Vraagprijs</span><b>${b.asking_price ? euro(b.asking_price) : '—'}</b></div>
+      ${margin !== null ? `<div><span>Winst bij dit bod</span><b class="${margin < 0 ? 'neg' : ''}">${euro(margin)}</b><small>na inkoop en kosten</small></div>` : ''}
+    </div>
+    ${others.length ? `<div class="banner">Er ${others.length === 1 ? 'ligt nog 1 ander open bod' : `liggen nog ${others.length} andere open biedingen`} op dit horloge, hoogste ${euro(Math.max(...others.map(o => n(o.amount))))}.</div>` : ''}
+    <div class="detail-grid">
+      <div><h3>Bieder</h3>
+        <div class="kv"><span>Naam</span><b>${esc(b.name)}</b></div><div class="kv"><span>E-mail</span><b><a class="link" href="mailto:${esc(b.email)}">${esc(b.email)}</a></b></div>${b.phone ? `<div class="kv"><span>Telefoon</span><b>${esc(b.phone)}</b></div>` : ''}<div class="kv"><span>Taal</span><b>${b.lang === 'en' ? 'Engels' : 'Nederlands'}</b></div>
+        ${b.message ? `<p class="notes">${esc(b.message)}</p>` : ''}
+        ${w ? `<p><button type="button" class="link" data-action="watch" data-id="${w.id}">Horloge openen</button></p>` : ''}
+      </div>
+      <div><h3>Ons antwoord</h3><div class="grid">
+        ${fieldHtml({ name: 'status', label: 'Status', type: 'select', options: BID_STATUS, value: b.status })}
+        ${fieldHtml({ name: 'counter_amount', label: 'Tegenbod (€)', type: 'money', value: b.counter_amount, hint: 'Alleen invullen bij een tegenbod.' })}
+        ${fieldHtml({ name: 'reply_note', label: 'Toelichting voor de bieder (zichtbaar bij status opvragen)', type: 'textarea', wide: true, value: b.reply_note })}
+        ${w ? fieldHtml({ name: 'reserve', label: 'Horloge op de website op "Gereserveerd" zetten', type: 'checkbox', wide: true, value: !!w.web_reserved }) : ''}
+      </div></div>
+    </div>
+    <footer class="actions"><button type="button" class="btn ghost danger-text left" data-bdel>Verwijderen</button>
+      <a class="btn" href="${bidMail(b, 'accepted')}">✉ Akkoord</a><a class="btn" href="${bidMail(b, 'countered')}">✉ Tegenbod</a><a class="btn" href="${bidMail(b, 'declined')}">✉ Afwijzen</a>
+      <button class="btn primary" type="submit">Opslaan</button></footer>
+  </form>`, 'detail');
+  const form = $('form', dlg);
+  const st = form.querySelector('[name=status]'), rs = form.querySelector('[name=reserve]');
+  st.addEventListener('change', () => { if (rs && st.value === 'accepted') rs.checked = true; });
+  form.addEventListener('submit', async e => {
+    e.preventDefault(); const d = formValues(form);
+    try {
+      await store.update('web_bids', id, { status: d.status, counter_amount: d.counter_amount === '' ? null : n(d.counter_amount), reply_note: d.reply_note, updated_at: new Date().toISOString() });
+      if (w && 'reserve' in d && !!d.reserve !== !!w.web_reserved) await store.update('watches', w.id, { web_reserved: !!d.reserve, history: hist(w, d.reserve ? `Gereserveerd na bod ${b.ref}` : 'Reservering op website opgeheven') });
+      toast('Bod bijgewerkt'); dlg.close(); render();
+    } catch (err) { toast(err.message, 'bad'); }
+  });
+  $('[data-bdel]', dlg).addEventListener('click', async () => {
+    if (!await confirmDialog('Bod verwijderen?', 'Dit bod en de gegevens van de bieder worden verwijderd. Dit kan niet ongedaan worden gemaakt.')) return;
+    await store.remove('web_bids', id); toast('Verwijderd'); dlg.close(); render();
+  });
+}
+
 const alertMatches = a => S().watches.filter(w => ['in_stock', 'incoming'].includes(w.status) && String(w.brand).toLowerCase() === String(a.brand).toLowerCase()
   && (!a.model || `${w.model} ${w.reference || ''}`.toLowerCase().includes(String(a.model).toLowerCase().split(' ')[0]))
   && (!a.max_price || n(w.web_price ?? w.estimated_value) <= n(a.max_price) * 1.1));
@@ -1602,11 +1665,11 @@ function launcher() {
     taken: `${open.length} open · ${mine.length} voor jou`,
     branding: (c => `${brand.filter(b => b.kind === 'color').length} kleuren · ${c} ${c === 1 ? 'bestand' : 'bestanden'}`)(brand.filter(b => b.kind === 'asset').length),
     documenten: `${items('doc').length} ${items('doc').length === 1 ? 'document' : 'documenten'} · ${missingReceipts(st).length} ${missingReceipts(st).length === 1 ? 'bon ontbreekt' : 'bonnen ontbreken'}`,
-    website: `${S().watches.filter(w => w.web_published && w.status !== 'sold').length} online · ${webOpen().length} ${webOpen().length === 1 ? 'aanbieding' : 'aanbiedingen'} open`,
+    website: `${S().watches.filter(w => w.web_published && w.status !== 'sold').length} online · ${(S().web_bids || []).filter(b => b.status === 'received').length} nieuwe biedingen · ${webOpen().length} ${webOpen().length === 1 ? 'aanbieding' : 'aanbiedingen'} open`,
     instellingen: `Ingelogd als ${me}`,
   };
   const rc = reconcile(st);
-  const badge = { financien: rc.ok ? pendingPayments(st).length : '!', taken: late, documenten: missingReceipts(st).length, website: (st.web_submissions || []).filter(x => x.status === 'received').length };
+  const badge = { financien: rc.ok ? pendingPayments(st).length : '!', taken: late, documenten: missingReceipts(st).length, website: (st.web_submissions || []).filter(x => x.status === 'received').length + (st.web_bids || []).filter(x => x.status === 'received').length };
   const h = new Date().getHours(), greet = h < 6 ? 'Goedenacht' : h < 12 ? 'Goedemorgen' : h < 18 ? 'Goedemiddag' : 'Goedenavond';
   return `<div class="launch">
     <div class="launch-hello"><h1>${greet}, ${esc(me)}</h1><p class="muted">${longDate()}</p></div>
@@ -1666,6 +1729,18 @@ Object.assign(pages, {
           <td>${w.vinted_url ? '<span class="chip">Vinted</span>' : ''}${w.chrono_url ? ' <span class="chip">Chrono24</span>' : ''}</td>
           <td><button class="btn small ${w.web_published ? 'primary' : ''}" data-action="web-toggle" data-id="${w.id}">${w.web_published ? '● Online' : 'Offline'}</button></td></tr>`).join('')}
       </tbody></table></div>` : empty('Hier staan nog geen horloges.')}`;
+  },
+
+  'web-bids'() {
+    const all = S().web_bids || [], f = ui.bidFilter || 'open';
+    const list = all.filter(b => f === 'all' || (f === 'open' ? ['received', 'countered'].includes(b.status) : f === 'accepted' ? b.status === 'accepted' : ['declined', 'sold', 'expired'].includes(b.status))).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    return head('Biedingen', 'Biedingen die bezoekers via "Doe een bod" op de website doen. Open er een om te accepteren, een tegenbod te doen of af te wijzen.') + webBanner() + `
+      <div class="toolbar">${tabsHtml('bidFilter', [['open', 'Open', all.filter(b => ['received', 'countered'].includes(b.status)).length], ['accepted', 'Geaccepteerd', all.filter(b => b.status === 'accepted').length], ['closed', 'Afgesloten'], ['all', 'Alles', all.length]])}</div>
+      ${list.length ? `<div class="card flush"><table class="table"><thead><tr><th>Horloge</th><th>Bieder</th><th class="r">Bod</th><th class="r">Vraagprijs</th><th class="r">%</th><th>Status</th><th>Datum</th></tr></thead><tbody>
+        ${list.map(b => { const pct = b.asking_price ? Math.round(b.amount / b.asking_price * 100) : null; return `<tr data-action="web-bid" data-id="${b.id}"><td><b>${esc(b.watch_label)}</b><br><small class="muted">${esc(b.ref)}</small></td><td>${esc(b.name)}<br><small class="muted">${esc(b.email)}</small></td>
+          <td class="r"><b>${euro(b.amount)}</b>${b.counter_amount ? `<br><small class="muted">tegenbod ${euro(b.counter_amount)}</small>` : ''}</td><td class="r">${b.asking_price ? euro(b.asking_price) : '—'}</td><td class="r">${pct ?? '—'}${pct ? '%' : ''}</td>
+          <td><span class="chip ws-${b.status === 'received' ? 'received' : b.status === 'accepted' ? 'accepted' : b.status === 'countered' ? 'offer_sent' : 'declined'}">${bidStatus(b.status)}</span></td><td>${fdate(String(b.created_at).slice(0, 10))}</td></tr>`; }).join('')}
+      </tbody></table></div>` : empty(f === 'open' ? 'Geen open biedingen. Nieuwe biedingen van de website verschijnen hier vanzelf.' : 'Niets in deze lijst.')}`;
   },
 
   'web-offers'() {
@@ -2436,6 +2511,7 @@ document.addEventListener('click', async e => {
       case 'web-edit': inDetail?.close(); webForm(id); break;
       case 'web-toggle': { e.stopPropagation(); const w = watchById(id); if (!w.web_published && !w.web_slug) { webForm(id); break; } await store.update('watches', id, { web_published: !w.web_published, history: hist(w, w.web_published ? 'Van de website gehaald' : 'Online gezet op de website') }); toast(w.web_published ? 'Offline gehaald' : 'Staat online'); render(); break; }
       case 'web-offer': offerDetail(id); break;
+      case 'web-bid': bidDetail(id); break;
       case 'web-alert-mailed': { const a2 = S().web_alerts.find(x => x.id === id); setTimeout(async () => { await store.update('web_alerts', id, { notified_at: new Date().toISOString() }); render(); }, 300); void a2; break; }
       case 'web-alert-off': await store.update('web_alerts', id, { active: false }); toast('Afgemeld'); render(); break;
       case 'wish': wishForm(); break;
